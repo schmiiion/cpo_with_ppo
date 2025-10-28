@@ -1,0 +1,2 @@
+class CPO(object):
+    pass
