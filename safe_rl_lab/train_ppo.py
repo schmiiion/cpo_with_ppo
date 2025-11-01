@@ -1,17 +1,11 @@
 import argparse
 from distutils.util import strtobool
-import gymnasium.wrappers
-import numpy as np
-import random
 from torch.utils.tensorboard import SummaryWriter
 import time
 import torch
-import torch.optim as optim
-import torch.nn as nn
-import safety_gymnasium as sg
-import tensorboard
-from envs.wrappers import CostIntoInfo
-from envs.wrappers import make_env
+from safe_rl_lab.envs.wrappers import make_env
+from safe_rl_lab.algo.ppo import PPO
+
 
 
 def parse_args():
@@ -57,12 +51,12 @@ if __name__ == '__main__':
 
     device = torch.device('cpu')
 
-    env_fun = make_env(args.gym_id, args.seed, 0 , args.capture_video, run_name)
-    env = env_fun()
+    make_env_fun = make_env(args.gym_id, args.seed, 0 , args.capture_video, run_name)
+    env = make_env_fun()
 
-    ppo = PPO()
+    ppo = PPO(env, model="A2C", runner_type="single", )
     ppo.train(env)
-
+    print(env)
 
 
 
