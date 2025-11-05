@@ -2,9 +2,13 @@ import argparse
 from distutils.util import strtobool
 import time
 import torch
+import wandb
+import gymnasium
+
+# OWN
 from safe_rl_lab.envs.wrappers import make_env
 from safe_rl_lab.algo.ppo import PPO
-import wandb
+
 
 
 
@@ -49,13 +53,19 @@ if __name__ == '__main__':
 
     device = torch.device('cpu')
 
-    make_env_fun = make_env(args.gym_id, args.seed, 0 , args.capture_video, run_name)
-    env = make_env_fun()
-    action_dim = env.action_space.shape[0]
-    obs_dim = env.observation_space.shape[0]
+    if args.num_envs == 1:
+        make_env_fun = make_env(args.gym_id, args.seed, 0 , args.capture_video, run_name)
+        env = make_env_fun()
+        ppo = PPO(env, model="A2C", total_steps=args.timesteps)
 
-    ppo = PPO(env, model="A2C", runner_type="single", obs_dim=obs_dim, act_dim=action_dim, total_steps=args.timesteps,
-              rollout_size=20)
+    else:
+        envs = gymnasium.vector.SyncVectorEnv(
+            [make_env(args.gym_id, args.seed + i, i, args.capture_video, run_name)
+             for i in range(args.num_envs)]
+        )
+        ppo = PPO(envs, total_steps=args.timesteps)
+
+
     ppo.train()
     print(env)
 
@@ -66,10 +76,6 @@ if __name__ == '__main__':
 
 
 
-    #envs
-    # envs = gymnasium.vector.SyncVectorEnv(
-    #     [make_env(args.gym_id, args.seed + i, i, args.capture_video, run_name)
-    #      for i in range(args.num_envs)]
-    # )
+
     # print("envs.single_observation_space.shape:", envs.single_observation_space.shape)
     # print("envs.single_action_space.shape:", envs.single_action_space.shape)

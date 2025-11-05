@@ -33,7 +33,7 @@ class ActorCritic(nn.Module):
 
     def forward_critic(self, obs):
         out = self.critic(self.backbone(obs))
-        return out
+        return out.squeeze(-1)
 
     #rollout-time: sample squashed action + corrected logp
     @torch.no_grad()
