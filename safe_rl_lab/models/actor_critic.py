@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 from torch.distributions import Normal
+import numpy as np
 
 
 #####Erkenntnisse:
@@ -9,15 +10,20 @@ from torch.distributions import Normal
 # Env schneidet actions bei -1, 1 ab, also selbst und nachvollziehbar machen!
 #
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
 class ActorCritic(nn.Module):
 
-    def __init__(self, obs_dim, act_dim, hidden_dim=512):
+    def __init__(self, obs_dim, act_dim, hidden_dim=64):
         super().__init__()
         self.backbone = nn.Sequential(
           nn.Linear(obs_dim, hidden_dim),
-          nn.GELU(),
+          nn.Tanh(),
           nn.Linear(hidden_dim, hidden_dim),
-          nn.GELU(),
+          nn.Tanh(),
         )
         self.actor = nn.Linear(hidden_dim, act_dim * 2)
         self.critic = nn.Linear(hidden_dim, 1)

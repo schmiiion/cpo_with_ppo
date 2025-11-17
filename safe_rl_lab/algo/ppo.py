@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import numpy as np
 import torch
 import wandb
 import torch.nn as nn
@@ -6,159 +9,227 @@ from gymnasium.vector import VectorEnv
 
 #### OWN
 from safe_rl_lab.models.actor_critic import ActorCritic
+from safe_rl_lab.models.agent import Agent
+from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 from safe_rl_lab.runners.single import SingleRunner
 from safe_rl_lab.runners.vector import VectorRunner
 
 class PPO:
 
-    def __init__(self, env, model="A2C", hidden_dim=512, rollout_size=256, total_steps=10000,
-                 gamma=0.99, lam=0.8, epochs=5, minibatch_size=64,
-                 lr=3e-4, clip_eps=0.2, vf_coef=0.5, ent_coef=0.0):
-        self.env = env
-        self.obs_dim = env.observation_space.shape[-1]
-        self.act_dim = env.action_space.shape[-1]
-        self.model = ActorCritic(obs_dim=self.obs_dim, act_dim=self.act_dim, hidden_dim=hidden_dim) if model == "A2C" else None
-        if self._is_vector_env():
-            self.runner = VectorRunner(self.env, self.model, self.obs_dim, self.act_dim)
-        else:
-            self.runner = SingleRunner(self.env, self.model, self.obs_dim, self.act_dim)
+    def __init__(self, envs, *, model_arch="shared", squash_actions=False, hidden_dim=64,
+                 rollout_size=512,
+                 gamma=0.99, gae_lambda=0.95, update_epochs=10,
+                 minibatch_size=64, lr=3e-4, clip_eps=0.2, vf_coef=0.5,
+                 ent_coef=0.01, max_grad_norm=0.5, num_iterations=5000,
+                 norm_adv=True, clip_vloss=True, target_kl=0.005, anneal_lr=True,
+                 run_name=None, store_model=False):
+        self.envs = envs
+        self.model_arch = model_arch
+        self.squash_actions = squash_actions
+        self.hidden_dim = hidden_dim
+        self.obs_dim = envs.observation_space.shape[-1]
+        self.act_dim = envs.action_space.shape[-1]
         self.rollout_size = rollout_size
-        self.total_steps = total_steps
+        self.batch_size = rollout_size * envs.num_envs
         self.gamma = gamma
-        self.lam = lam
-        self.epochs = epochs
+        self.gae_lambda = gae_lambda
+        self.update_epochs = update_epochs
         self.minibatch_size = minibatch_size
         self.lr = lr
+        self.anneal_lr = anneal_lr
         self.clip_eps = clip_eps
+        self.target_kl = target_kl
         self.vf_coef = vf_coef
         self.ent_coef = ent_coef
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=lr)
+        self.max_grad_norm = max_grad_norm
+        self.norm_adv = norm_adv
+        self.num_iterations = num_iterations #overall steps: num_iterations*batch_size
+        self.clip_vloss = clip_vloss
+
+        self.run_name = run_name
+        self.store_model = store_model
+        self.ckpt_dir = Path("checkpoints")
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+        self.best_ep_mean = -float('inf')
+
 
         if wandb.run:
             wandb.config.update({
+                "model_arch": model_arch,
+                "squash_actions": squash_actions,
+                "hidden_dim": hidden_dim,
                 "obs_dim": self.obs_dim,
                 "act_dim": self.act_dim,
-                "hidden_dim": hidden_dim,
                 "rollout_size": rollout_size,
+                "batch_size": self.batch_size,
                 "gamma": gamma,
-                "lam": lam,
-                "epochs": epochs,
+                "gae_lambda": gae_lambda,
+                "update_epochs": update_epochs,
                 "lr": lr,
+                "anneal_lr": anneal_lr,
                 "clip_eps": clip_eps,
+                "target_kl": target_kl,
                 "vf_coef": vf_coef,
                 "ent_coef": ent_coef,
+                "max_grad_norm": max_grad_norm,
+                "norm_adv": norm_adv,
+                "num_iterations": num_iterations,
+                "clip_vloss": clip_vloss,
                 "optimizer_type": "adam"
             }, allow_val_change=True)
 
     def train(self):
+        if self.model_arch == "separate":
+            agent = Agent(self.envs, self.hidden_dim, self.squash_actions)
+        elif self.model_arch == "shared":
+            agent = SharedBackboneAgent(self.envs, self.hidden_dim, self.squash_actions)
+
+        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
+        optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
         global_steps = 0
-        while global_steps < self.total_steps:
-            buffer:dict = self.runner.run(self.rollout_size)
-            adv, returns = self._gae_from_rollout(buffer)
-            assert torch.isfinite(adv).all()
-            assert torch.isfinite(returns).all()
-            adv_std = adv.std().item()
-            if adv_std < 1e-6:
-                print("WARNING: advantage std ~ 0. Check done masks and rewards.")
-            #normalize advantages per rollout - WHY?
-            #adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        for iteration in range(1, self.num_iterations +1):
+            print(f"iteration: {iteration} of {self.num_iterations}")
+            if self.anneal_lr:
+                frac = 1.0 - (iteration / self.num_iterations)
+                lrnow = frac * self.lr
+                optim.param_groups[0]['lr'] = lrnow
 
-            self._ppo_update(buffer["obs"], buffer["act"], buffer["logprob"], buffer["val"], adv, returns)
+            buffer, global_steps = runner.run(self.rollout_size, global_steps, agent)
+            #store if model is the best yet
+            if self.store_model:
+                if buffer["ep_rewards_mean"] > self.best_ep_mean:
+                    self.best_ep_mean = buffer["ep_rewards_mean"]
+                    print('----- storing new model -----')
+                    print(buffer["ep_rewards_mean"])
+                    self._save_model(iteration, global_steps, agent, optim)
 
-            global_steps += self.rollout_size
+            advantages, returns = self._gae_from_rollout(buffer)
 
-            for e in buffer.get("episodes", []):
-                if wandb.run:
-                    wandb.log({
-                        "episode/return": e["return"],
-                        "episode/length": e["length"],
-                        "charts/total_steps":  global_steps
-                    }, step=global_steps)
+            #flatten the batch
+            b_obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
+            b_logprobs = buffer["logprob"].reshape(-1)
+            b_actions = buffer["act"].reshape((-1,) + (self.act_dim,))
+            b_advantages = advantages.reshape(-1)
+            b_returns = returns.reshape(-1)
+            b_values = buffer["val"].reshape(-1)
 
-    def _ppo_update(self, obs, act, logp_old, val_old, adv, ret):
-        self.model.train()
-        T = obs.shape[0]
+            self._ppo_update(agent, optim, b_obs, b_actions, b_logprobs, b_advantages, b_returns, b_values, global_steps)
 
-        for _ in range(self.epochs):
-            idx = torch.randperm(T, device=obs.device)  # why?
-            for start in range(0, T, self.minibatch_size):
-                mb = idx[start:start + self.minibatch_size] # num_rollouts random numbers(unique) from 0 to T-1
-                obs_mb = obs[mb]
-                act_mb = act[mb]
-                logp0_mb = logp_old[mb].detach()
-                adv_mb = adv[mb]
-                ret_mb = ret[mb]
-                val0_mb = val_old[mb].detach()
+            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+            var_y = np.var(y_true)
+            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            if wandb.run:
+                wandb.log({"losses/explained_variance": explained_var}, step=global_steps)
 
-                #critic
-                v_pred = self.model.forward_critic(obs_mb).squeeze(-1)
 
-                #policy
-                logp = self.model.log_prob_of_action(obs_mb, act_mb)
+    def _ppo_update(self, agent, optim, b_obs, b_actions, b_logprobs, b_advantages, b_returns, b_values, global_steps):
+        b_inds = np.arange(self.batch_size)
+        clipfracs = []
+        v_loss, pg_loss, entropy_loss = None, None, None
 
-                # NO Entropy bonus so far
+        for epoch in range(self.update_epochs):
+            np.random.shuffle(b_inds)
+            for start in range(0, self.batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
+                mb_inds = b_inds[start:end]
 
-                #policy loss (clipped)
-                ratio = (logp - logp0_mb).exp()
-                pg_unclipped = -adv_mb * ratio
-                pg_clipped = -adv_mb * torch.clamp(ratio, 1-self.clip_eps, 1+self.clip_eps)
-                policy_loss = torch.max(pg_unclipped, pg_clipped).mean()
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                logratio = newlogprob - b_logprobs[mb_inds]
+                ratio = logratio.exp()
 
-                #value loss - MSE / L2 Norm
-                value_loss  = 0.5 * (v_pred - ret_mb).pow(2).mean()
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-logratio).mean()
+                    approx_kl = ((ratio - 1) - logratio).mean()
+                    clipfracs += [((ratio - 1.0).abs() > self.clip_eps).float().mean().item()]
 
-                loss = policy_loss + self.vf_coef * value_loss - self.ent_coef # * entropy
+                mb_advantages = b_advantages[mb_inds]
+                if self.norm_adv:
+                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                self.optim.zero_grad()
+                # Policy loss
+                pg_loss1 = -mb_advantages * ratio
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                # Value loss
+                newvalue = newvalue.view(-1)
+                if self.clip_vloss:
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                    v_clipped = b_values[mb_inds] + torch.clamp(
+                        newvalue - b_values[mb_inds],
+                        -self.clip_eps,
+                        self.clip_eps,
+                    )
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * v_loss_max.mean()
+                else:
+                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+
+                entropy_loss = entropy.mean()
+                loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
+
+                optim.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                self.optim.step()
+                nn.utils.clip_grad_norm_(agent.parameters(), self.max_grad_norm)
+                optim.step()
 
-                # DIAGNOSTICS
-                approx_kl = (logp0_mb - logp).mean().item()
-                if wandb.run:
-                    wandb.log({
-                        "loss/policy": policy_loss.item(),
-                        "loss/value": value_loss.item(),
-                        "ppo/approx_kl": approx_kl,
-                    }, commit=False) # dont advance the global counter yet
+            if self.target_kl is not None and approx_kl > self.target_kl:
+                break
 
+        if wandb.run:
+            wandb.log({
+                "charts/learning_rate": optim.param_groups[0]["lr"],
+                "losses/value_loss": v_loss.item(),
+                "losses/policy_loss": pg_loss.item(),
+                "losses/entropy": entropy_loss.item(),
+                "losses/old_approx_kl": old_approx_kl.item(),
+                "losses/approx_kl": approx_kl.item(),
+                "losses/clipfrac": np.mean(clipfracs),
+            }, step=global_steps)
 
     @torch.no_grad()
     def _gae_from_rollout(self, buf):
         """:returns advantages, returns with same shape as buffer["reward"] / ["val"]"""
-        rew = buf["rew"]  # [T] or [T, N]
-        val = buf["val"]  # [T] or [T, N]
-        done = buf["done"]  # [T]  or [T, N] -> (true terminal only)
-        v_last = buf["v_last"]  # scalar of [N]
+        with torch.no_grad():
+            rewards = buf["rew"]  # [T] or [T, N]
+            values = buf["val"]  # [T] or [T, N]
+            dones = buf["done"]  # [T]  or [T, N] -> (true terminal only)
+            next_value = buf["v_last"]  # scalar of [N]
+            next_done = buf["done_last"]
+            advantages = torch.zeros_like(rewards)
+            lastgaelam = 0
 
-        single = (rew.dim() == 1)
+            # single = (rew.dim() == 1)
+            # if single:   # add another dimension for the single env case
+            #     rew = rew.unsqueeze(1)
+            #     val = val.unsqueeze(1)
+            #     done = done.unsqueeze(1)
+            #     v_last = v_last.unsqueeze(0) if v_last.dim() == 1 else v_last
 
-        if single:   # add another dimension for the single env case
-            rew = rew.unsqueeze(1)
-            val = val.unsqueeze(1)
-            done = done.unsqueeze(1)
-            v_last = v_last.unsqueeze(0) if v_last.dim() == 1 else v_last
-
-        T, N = rew.shape
-        adv = torch.zeros_like(rew)
-        next_adv = torch.zeros(N, device=rew.device) #running accumulator
-        #next_v = v_last #step init to run backwards  # WHY not needed anymore?
-        not_done = (~done).float()
-
-        for t in reversed(range(T)):
-            v_next = v_last if t == T-1 else val[t+1]
-            delta = rew[t] + self.gamma * not_done[t] * v_next - val[t]
-            next_adv = delta + self.gamma * self.lam * not_done[t] * next_adv
-            adv[t] = next_adv
-
-        ret = adv + val
-        if single:
-            adv = adv.squeeze(1)
-            ret = ret.squeeze(1)
-        return adv, ret
+            for t in reversed(range(self.rollout_size)):
+                if t == self.rollout_size - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value.view(-1)
+                else:
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t] #one step TD error
+                advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+            return advantages, advantages + values
 
     def _is_vector_env(self):
-        if isinstance(self.env, VectorEnv):
+        if isinstance(self.envs, VectorEnv):
             return True
         return False
+
+    def _save_model(self, iteration, global_steps, agent, optim):
+        ckpt_path = self.ckpt_dir / f"{self.run_name}_best.pt"
+        torch.save({
+            "iteration": iteration,
+            "steps": global_steps,
+            "model_arch": self.model_arch,
+            "model_state_dict": agent.state_dict(),
+            "optimizer_state_dict": optim.state_dict(),
+        }, ckpt_path)

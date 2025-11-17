@@ -4,21 +4,23 @@ import numpy as np
 from gymnasium.wrappers import RecordEpisodeStatistics
 
 
-def make_env(gym_id, seed, idx, capture_video, run_name):
+def make_env(gym_id, seed, idx, capture_video, run_name, gamma):
     def thunk():
         render_mode = "rgb_array" if capture_video else 'human'
         env = sg.make(gym_id, render_mode=render_mode)
         env = CostIntoInfo(env)
-        env = RecordEpisodeStatistics(env, deque_size=1000) # adds "r" and "l" entries to info dict
+        env = gym.wrappers.FlattenObservation(env)
+        env = RecordEpisodeStatistics(env)
+        env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.NormalizeObservation(env)
+        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(
                 env,
                 f"logs/videos/{run_name}",
-                episode_trigger=lambda ep: ep % 50 == 0)
-
-        # env.seed(seed)
-        # env.action_space.seed(seed)
-        # env.observation_space.seed(seed)
+                episode_trigger=lambda ep: ep % 30 == 0)
         return env
     return thunk
 
