@@ -11,6 +11,7 @@ from gymnasium.vector import VectorEnv
 from safe_rl_lab.models.actor_critic import ActorCritic
 from safe_rl_lab.models.agent import Agent
 from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
+from safe_rl_lab.utils.gae import gae_from_rollout
 from safe_rl_lab.runners.single import SingleRunner
 from safe_rl_lab.runners.vector import VectorRunner
 
@@ -103,7 +104,7 @@ class PPO:
                     print(buffer["ep_rewards_mean"])
                     self._save_model(iteration, global_steps, agent, optim)
 
-            advantages, returns = self._gae_from_rollout(buffer)
+            advantages, returns = self.gae_from_rollout(buffer, self.rollout_size, self.gamma, self.gae_lambda)
 
             #flatten the batch
             b_obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
@@ -189,35 +190,6 @@ class PPO:
                 "losses/clipfrac": np.mean(clipfracs),
             }, step=global_steps)
 
-    @torch.no_grad()
-    def _gae_from_rollout(self, buf):
-        """:returns advantages, returns with same shape as buffer["reward"] / ["val"]"""
-        with torch.no_grad():
-            rewards = buf["rew"]  # [T] or [T, N]
-            values = buf["val"]  # [T] or [T, N]
-            dones = buf["done"]  # [T]  or [T, N] -> (true terminal only)
-            next_value = buf["v_last"]  # scalar of [N]
-            next_done = buf["done_last"]
-            advantages = torch.zeros_like(rewards)
-            lastgaelam = 0
-
-            # single = (rew.dim() == 1)
-            # if single:   # add another dimension for the single env case
-            #     rew = rew.unsqueeze(1)
-            #     val = val.unsqueeze(1)
-            #     done = done.unsqueeze(1)
-            #     v_last = v_last.unsqueeze(0) if v_last.dim() == 1 else v_last
-
-            for t in reversed(range(self.rollout_size)):
-                if t == self.rollout_size - 1:
-                    nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value.view(-1)
-                else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t] #one step TD error
-                advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
-            return advantages, advantages + values
 
     def _is_vector_env(self):
         if isinstance(self.envs, VectorEnv):

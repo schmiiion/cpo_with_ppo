@@ -33,7 +33,6 @@ class Agent(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         """
-            Action must be Tanh'd!!!!
             Is logstd because of the exp -> can only be positive
         """
         action_mean = self.actor_mean(x)

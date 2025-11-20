@@ -18,7 +18,7 @@ class VectorRunner:
 
 
     @torch.inference_mode()
-    def run(self, num_steps, global_step, agent):
+    def run(self, num_steps, global_step, agent, is_phasic=False):
         N = self.num_envs
 
         obs_buf = torch.empty((num_steps, N, *self.obs_dims), dtype=torch.float32, device=self.device)
@@ -28,6 +28,9 @@ class VectorRunner:
         rew_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         cost_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         done_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
+        if is_phasic:
+            pd_mean_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
+            pd_std_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         ep_rewards = []
 
         for step in range(0, num_steps):
@@ -37,13 +40,19 @@ class VectorRunner:
 
             # Action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(self.obs)
+                if is_phasic:
+                    action, info_dict = agent.act(self.obs, return_dist_params=True)
+                    pd_mean_buf[step] = info_dict["pd_mean"]
+                    pd_std_buf[step] = info_dict["pd_std"]
+                else:
+                    action, info_dict = agent.act(self.obs)
+                value = info_dict["vpred"]
                 val_buf[step] = value.flatten()
+                logprob = info_dict["logp"]
 
             #Monitor actions????
-            a = action.detach().cpu().numpy()
-            low, high = self.envs.single_action_space.low, self.envs.single_action_space.high
-
+            # a = action.detach().cpu().numpy()
+            # low, high = self.envs.single_action_space.low, self.envs.single_action_space.high
             # count out-of-bounds samples
             # too_low = (a < low).sum()
             # too_high = (a > high).sum()
@@ -67,7 +76,7 @@ class VectorRunner:
                         if wandb.run:
                             wandb.log({"charts/episodic_return": info["episode"]["r"]}, step=global_step)
 
-        v_last = agent.get_value(self.obs)
+        v_last = agent.v(self.obs)
         done_last = self.done
         ep_rewards_mean = sum(ep_rewards) / len(ep_rewards) if ep_rewards else 0.0
 
@@ -79,7 +88,7 @@ class VectorRunner:
                 "charts/ep_return_std": std_r,
             }, step=global_step)
 
-        return {
+        return_dict = {
             "obs": obs_buf,
             "act": act_buf,
             "logprob": logprob_buf,
@@ -90,4 +99,9 @@ class VectorRunner:
             "v_last": v_last,
             "done_last": done_last,
             "ep_rewards_mean": ep_rewards_mean,
-        }, global_step
+        }
+        if is_phasic:
+            return_dict["old_pd_mean"] = pd_mean_buf
+            return_dict["old_pd_std"] = pd_std_buf
+
+        return return_dict, global_step
