@@ -93,7 +93,12 @@ class PPG:
         #phase consists of policy and aux phase
         for phase in range(1, self.num_iterations +1):
             print(f"phase: {phase} of {self.num_iterations}")
-            buffer_B = self._create_buffer_B()
+            buffer_B = {
+                "obs": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.obs_dim), dtype=torch.float32),
+                "vtarg": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs), dtype=torch.float32),
+                "old_mean": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.act_dim), dtype=torch.float32),
+                "old_logstd": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.act_dim), dtype=torch.float32),
+            }
 
             if self.anneal_lr:
                 frac = 1.0 - (phase / self.num_iterations)
@@ -101,8 +106,9 @@ class PPG:
                 optim.param_groups[0]['lr'] = lrnow
 
             #policy phase
+            print('--- start policy phase ---')
             for iteration in range(self.N_pi):
-                buffer, global_steps = runner.run(self.rollout_size, global_steps, agent)
+                buffer, global_steps = runner.run(self.rollout_size, global_steps, agent, is_phasic=True)
                 #store if model is the best yet
                 if self.store_model:
                     if buffer["ep_rewards_mean"] > self.best_ep_mean:
@@ -114,16 +120,17 @@ class PPG:
                 advantages, returns = gae_from_rollout(buffer, rollout_size=self.rollout_size, gamma=self.gamma, gae_lambda=self.gae_lambda)
 
                 # flatten the batch: [rollout, envs] -> [rollout * envs]
-                b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values = self._flatten_batch(buffer, advantages, returns, buffer_B)
-                #add to buffer
-                buffer_B["old_mean"].append(b_advantages)
-                buffer_B["old_logstd"].append(b_values)
+                b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_pd_means, b_pd_stds = self._flatten_batch(buffer, advantages, returns)
+                buffer_B["obs"][iteration] = b_obs
+                buffer_B["vtarg"][iteration] = b_returns
+                buffer_B["old_mean"][iteration] = b_pd_means
+                buffer_B["old_logstd"][iteration] = b_pd_stds
 
                 for epoch in range(self.E_pi):
-                    self._policy_update(agent, optim, b_obs, b_actions, b_logprobs, b_advantages, b_returns)
+                    self._policy_update(agent, optim, b_obs, b_actions, b_logprobs, b_advantages, global_steps)
 
                 for epoch in range(self.E_v):
-                    self._value_update(agent, optim, b_obs, b_actions, b_logprobs, b_returns)
+                    self._value_update(agent, optim, b_obs, b_returns, b_values, global_steps)
 
             # y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
             # var_y = np.var(y_true)
@@ -132,9 +139,9 @@ class PPG:
             #     wandb.log({"losses/explained_variance": explained_var}, step=global_steps)
 
             #auxiliary phase
+            print('--- start aux phase ---')
             for epoch in range(self.E_aux):
-                self._aux_update(buffer_B, self.agent, optim)
-                self._value_update()
+                self._aux_train(buffer_B, agent, optim, global_steps)
 
 
     def _policy_update(self, agent, optim, b_obs, b_actions, b_logprobs, b_advantages, global_steps):
@@ -147,7 +154,9 @@ class PPG:
             end = start + self.minibatch_size
             mb_inds = b_inds[start:end]
 
-            _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            dist, vpredtrue, _ = agent(b_obs[mb_inds])
+            newlogprob = dist.log_prob(b_actions[mb_inds]).sum(-1)
+            entropy = dist.entropy().sum(-1)
             logratio = newlogprob - b_logprobs[mb_inds]
             ratio = logratio.exp()
 
@@ -187,23 +196,23 @@ class PPG:
 
     def _value_update(self, agent, optim, b_obs, b_returns, b_values, global_steps):
         b_inds = np.arange(self.batch_size)
-        clipfracs = []
+        np.random.shuffle(b_inds)
         v_loss = None
 
-        np.random.shuffle(b_inds)
         for start in range(0, self.batch_size, self.minibatch_size):
             end = start + self.minibatch_size
             mb_inds = b_inds[start:end]
 
             newvalue = agent.v(b_obs[mb_inds]).view(-1)
             if self.clip_vloss:
-                v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                v_loss_unclipped = (newvalue - b_values[mb_inds]) ** 2
                 v_clipped = b_values[mb_inds] + torch.clamp(
                     newvalue - b_values[mb_inds],
                     -self.clip_eps,
                     self.clip_eps,
                 )
-                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                ref = b_returns[mb_inds]
+                v_loss_clipped = (v_clipped - ref) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
             else:
@@ -220,34 +229,35 @@ class PPG:
                 "losses/value_loss": v_loss.item(),
             }, step=global_steps)
 
-    def _aux_update(self, buffer, agent):
-        obs = buffer["obs"]
-        v_targets = buffer["vtarg"]
+    def _aux_train(self, buffer, agent, optim, global_step):
+        obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
+        v_targets = buffer["vtarg"].view(-1)
         #actions = buffer["acts"] -> analytical KL div used
-        old_dist_mean = buffer["old_pd_mean"]
-        old_dist_std = buffer["old_pd_std"]
+        old_dist_mean = buffer["old_mean"].reshape((-1,) + (self.act_dim,))
+        old_dist_std = buffer["old_logstd"].reshape((-1,) + (self.act_dim,))
 
-        buffer_size = len(obs)
-        b_inds = np.arange(buffer_size)
+        buffer_len = obs.shape[0]
+        b_inds = np.arange(buffer_len)
         np.random.shuffle(b_inds)
-        for start in range(0, buffer_size, self.aux_minibatch_size):
+        for start in range(0, buffer_len, self.aux_minibatch_size):
             end = start + self.aux_minibatch_size
             mb_inds = b_inds[start:end]
-            new_dist, vpredtrue, aux = agent(obs[mb_inds])
-            mb_targets = v_targets[mb_inds]
-            L_aux = agent.compute_aux_loss(aux, mb_targets)
+            new_pd, _, aux = agent(obs[mb_inds])
+            loss_dict = {}
+            old_pd = Normal(loc=old_dist_mean[mb_inds], scale=old_dist_std[mb_inds].exp())
+            loss_dict["pol_distance"] = kl_divergence(old_pd, new_pd).sum(-1).mean()
+            loss_dict.update(agent.compute_aux_loss(aux, v_targets[mb_inds]))
 
-            old_dist = Normal(old_dist_mean, old_dist_std)
-            kl_div = kl_divergence(old_dist, new_dist)
-
-            L_joint = L_aux + self.beta_clone * kl_div
-            L_joint.backward()
-
-
-
-
-
-
+            loss = 0
+            for name in loss_dict.keys():
+                unscaled_loss = loss_dict[name]
+                #uniform weight = 1
+                loss += unscaled_loss
+                if wandb.run:
+                    wandb.log({f"charts/aux_phase_{name}": unscaled_loss}, step=global_step)
+            optim.zero_grad()
+            loss.backward()
+            optim.step()
 
     def _is_vector_env(self):
         if isinstance(self.envs, VectorEnv):
@@ -264,27 +274,15 @@ class PPG:
             "optimizer_state_dict": optim.state_dict(),
         }, ckpt_path)
 
-    def _create_buffer_B(self):
-        return {
-            "obs": [],
-            "actions": [],
-            "old_logprob": [],
-            "vtarg": [],
-            "old_mean": [],
-            "old_logstd": []
-        }
 
-    def _flatten_batch(self, buffer, advantages, returns, buffer_B=None):
+    def _flatten_batch(self, buffer, advantages, returns):
         b_obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))  # collapse envs dimension -> rollout * envs
         b_logprobs = buffer["logprob"].reshape(-1)
         b_actions = buffer["act"].reshape((-1,) + (self.act_dim,))
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = buffer["val"].reshape(-1)
-        if buffer_B is not None:
-            buffer_B["obs"].append(b_obs)
-            buffer_B["actions"].append(b_actions)
-            buffer_B["old_logprob"].append(b_logprobs)
-            buffer_B["vtarg"].append(b_returns)
+        b_means = buffer["old_pd_mean"].reshape((-1,) + (self.act_dim,))
+        b_logstds = buffer["old_pd_std"].reshape((-1,) + (self.act_dim,))
 
-        return b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values
+        return b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_means, b_logstds

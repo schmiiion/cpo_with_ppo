@@ -29,8 +29,8 @@ class VectorRunner:
         cost_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         done_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         if is_phasic:
-            pd_mean_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
-            pd_std_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
+            pd_mean_buf = torch.empty((num_steps, N, *self.act_dims), dtype=torch.float32, device=self.device)
+            pd_std_buf = torch.empty((num_steps, N, *self.act_dims), dtype=torch.float32, device=self.device)
         ep_rewards = []
 
         for step in range(0, num_steps):

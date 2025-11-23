@@ -39,7 +39,7 @@ if __name__ == '__main__':
 
         while not done:
             with torch.no_grad():
-                action, _, _, _ = agent.get_action_and_value(obs)
+                action, _ = agent.act(obs)
             a = action.squeeze(0).cpu().numpy()
             next_obs, r, terminated, truncated, info = env.step(a)
             done = terminated or truncated
