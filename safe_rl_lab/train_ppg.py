@@ -16,7 +16,7 @@ from safe_rl_lab.algo.ppg import PPG
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gym_id', type=str, default='SafetyRacecarGoal2-v0')
+    parser.add_argument('--gym_id', type=str, default='SafetyDoggoGoal0-v0')
     # parser.add_argument('--gym_id', type=str, default='SafetyPointGoal0-v0')
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--track', type=lambda x:bool(strtobool(x)), default=False, nargs='?', const=True,
@@ -59,7 +59,9 @@ if __name__ == '__main__':
         [make_env(args.gym_id, args.seed + i, i, args.capture_video, run_name, 0.99)
          for i in range(args.num_envs)], shared_memory=False
     )
-    ppg = PPG(envs, run_name=run_name, store_model=args.store_model)
+    #lr from paper:
+    lr = 5e-4
+    ppg = PPG(envs, run_name=run_name, lr=lr, store_model=args.store_model)
     assert isinstance(envs.single_action_space, gymnasium.spaces.Box), "only continuous action space is supported"
 
     ppg.train()

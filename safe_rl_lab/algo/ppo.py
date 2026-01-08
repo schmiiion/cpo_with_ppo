@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import numpy as np
+from collections import deque
+import time
 import torch
 import wandb
 import torch.nn as nn
@@ -9,11 +11,10 @@ from gymnasium.vector import VectorEnv
 
 #### OWN
 from safe_rl_lab.models.actor_critic import ActorCritic
-from safe_rl_lab.models.agent import Agent
+from safe_rl_lab.models.actor_critic_disjoint import ActorCriticDisjoint
 from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 from safe_rl_lab.utils.gae import gae_from_rollout
-from safe_rl_lab.runners.single import SingleRunner
-from safe_rl_lab.runners.vector import VectorRunner
+from safe_rl_lab.runners.vector_runner import VectorRunner
 
 class PPO:
 
@@ -21,7 +22,7 @@ class PPO:
                  rollout_size=512,
                  gamma=0.99, gae_lambda=0.95, update_epochs=10,
                  minibatch_size=64, lr=3e-4, clip_eps=0.2, vf_coef=0.5,
-                 ent_coef=0.01, max_grad_norm=0.5, num_iterations=5000,
+                 ent_coef=0.01, max_grad_norm=0.5, num_iterations=10000,
                  norm_adv=True, clip_vloss=True, target_kl=0.005, anneal_lr=True,
                  run_name=None, store_model=False):
         self.envs = envs
@@ -53,6 +54,12 @@ class PPO:
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.best_ep_mean = -float('inf')
 
+        #wall clock time:
+        self.sps_logging_interval = 10
+        self.sps_window = deque(maxlen=10)  # Keep last 10 measurements
+        self.last_log_time = time.time()
+        self.last_global_step = 0
+
 
         if wandb.run:
             wandb.config.update({
@@ -80,16 +87,22 @@ class PPO:
             }, allow_val_change=True)
 
     def train(self):
-        if self.model_arch == "separate":
-            agent = Agent(self.envs, self.hidden_dim, self.squash_actions)
-        elif self.model_arch == "shared":
-            agent = SharedBackboneAgent(self.envs, self.hidden_dim, self.squash_actions)
+        if self.model_arch == "shared":
+            agent = ActorCritic(obs_dim=self.obs_dim, act_dim=self.act_dim, hidden_dim=self.hidden_dim)
+        elif self.model_arch == "separate":
+            agent = SharedBackboneAgent(self.envs, self.hidden_dim)
+        else:
+            raise RuntimeError("Invalid agent architecture")
 
-        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
         optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
-        global_steps = 0
+        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
+        global_steps, last_global_step = 0, 0
         for iteration in range(1, self.num_iterations +1):
             print(f"iteration: {iteration} of {self.num_iterations}")
+
+            if iteration % self.sps_logging_interval == 0 and iteration > 0:
+                self._comp_and_log_wall_time(global_steps)
+
             if self.anneal_lr:
                 frac = 1.0 - (iteration / self.num_iterations)
                 lrnow = frac * self.lr
@@ -100,11 +113,10 @@ class PPO:
             if self.store_model:
                 if buffer["ep_rewards_mean"] > self.best_ep_mean:
                     self.best_ep_mean = buffer["ep_rewards_mean"]
-                    print('----- storing new model -----')
-                    print(buffer["ep_rewards_mean"])
+                    print(f'----- storing new model with mean reward {buffer["ep_rewards_mean"]}')
                     self._save_model(iteration, global_steps, agent, optim)
 
-            advantages, returns = self.gae_from_rollout(buffer, self.rollout_size, self.gamma, self.gae_lambda)
+            advantages, returns = gae_from_rollout(buffer, self.rollout_size, self.gamma, self.gae_lambda)
 
             #flatten the batch
             b_obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
@@ -134,8 +146,11 @@ class PPO:
                 end = start + self.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
+                pdf, vpred, _ = agent(b_obs[mb_inds])
+                action_batch = b_actions[mb_inds]
+                new_log_probs = pdf.log_prob(action_batch).sum(dim=-1)
+                old_log_probs = b_logprobs[mb_inds]
+                logratio = new_log_probs - old_log_probs
                 ratio = logratio.exp()
 
                 with torch.no_grad():
@@ -154,7 +169,7 @@ class PPO:
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
-                newvalue = newvalue.view(-1)
+                newvalue = vpred.view(-1) #flatten to make compatible
                 if self.clip_vloss:
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     v_clipped = b_values[mb_inds] + torch.clamp(
@@ -168,7 +183,7 @@ class PPO:
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
+                entropy_loss = pdf.entropy().mean()
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
                 optim.zero_grad()
@@ -181,13 +196,13 @@ class PPO:
 
         if wandb.run:
             wandb.log({
-                "charts/learning_rate": optim.param_groups[0]["lr"],
+                # "charts/learning_rate": optim.param_groups[0]["lr"],
                 "losses/value_loss": v_loss.item(),
-                "losses/policy_loss": pg_loss.item(),
+                # "losses/policy_loss": pg_loss.item(),
                 "losses/entropy": entropy_loss.item(),
-                "losses/old_approx_kl": old_approx_kl.item(),
+                # "losses/old_approx_kl": old_approx_kl.item(),
                 "losses/approx_kl": approx_kl.item(),
-                "losses/clipfrac": np.mean(clipfracs),
+                # "losses/clipfrac": np.mean(clipfracs),
             }, step=global_steps)
 
 
@@ -205,3 +220,19 @@ class PPO:
             "model_state_dict": agent.state_dict(),
             "optimizer_state_dict": optim.state_dict(),
         }, ckpt_path)
+
+    def _comp_and_log_wall_time(self, global_steps):
+        current_time = time.time()
+        elapsed_time = current_time - self.last_log_time
+
+        steps_diff = global_steps - self.last_global_step
+        self.sps_window.append(steps_diff / elapsed_time)
+        avg_sps = np.mean(self.sps_window)
+        print(f"avg sps: {avg_sps:.2f}")
+
+        if wandb.run:
+            wandb.log({"charts/SPS_mean": avg_sps}, step=global_steps)
+
+        # Reset trackers
+        self.last_log_time = current_time
+        self.last_global_step = global_steps

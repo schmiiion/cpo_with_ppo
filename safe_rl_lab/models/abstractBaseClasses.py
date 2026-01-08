@@ -11,7 +11,7 @@ class PpoModel(th.nn.Module):
         info = {"vpred": vpred, "logp": logp}
         if return_dist_params:
             info["pd_mean"] = pd.mean
-            info["pd_std"] = pd.stddev.log()
+            info["pd_std"] = pd.stddev
         return ac, info
 
     def v(self, ob):

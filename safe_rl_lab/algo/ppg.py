@@ -8,22 +8,47 @@ from gymnasium.vector import VectorEnv
 from torch.distributions import kl_divergence, Normal
 
 #### OWN
-from safe_rl_lab.models.phasicModel import PhasicVanillaModel
-from safe_rl_lab.runners.vector import VectorRunner
+from safe_rl_lab.models.phasicModel import PhasicValueModel
+from safe_rl_lab.runners.vector_runner import VectorRunner
 from safe_rl_lab.utils.gae import gae_from_rollout
+
+
+class _Buffer_B:
+    def __init__(self, *, N_pi, rollout_size, num_envs, obs_dim, act_dim):
+        self.obs_dim = obs_dim
+        self.act_dim = act_dim
+        self.obs = torch.empty((N_pi, rollout_size * num_envs, obs_dim), dtype=torch.float32)
+        self.vtarg = torch.empty((N_pi, rollout_size * num_envs), dtype=torch.float32)
+        self.old_mean = torch.empty((N_pi, rollout_size * num_envs, act_dim), dtype=torch.float32)
+        self.old_std = torch.empty((N_pi, rollout_size * num_envs, act_dim), dtype=torch.float32)
+
+    def store(self, iteration, b_obs, b_returns, b_pd_means, b_pd_stds):
+        self.obs[iteration] = b_obs
+        self.vtarg[iteration] = b_returns
+        self.old_mean[iteration] = b_pd_means
+        self.old_std[iteration] = b_pd_stds
+
+    def get_flattened(self):
+        obs = self.obs.reshape((-1,) + (self.obs_dim,))
+        v_targets = self.vtarg.view(-1)
+        #actions = buffer["acts"] -> analytical KL div used
+        old_dist_mean = self.old_mean.reshape((-1,) + (self.act_dim,))
+        old_dist_std = self.old_std.reshape((-1,) + (self.act_dim,))
+        return obs, v_targets, old_dist_mean, old_dist_std
 
 
 class PPG:
 
     def __init__(self, envs, *, hidden_dim=64, rollout_size=512,
                  gamma=0.99, gae_lambda=0.95, update_epochs=10,
-                 minibatch_size=64, lr=3e-4, clip_eps=0.2, vf_coef=0.5,
+                 minibatch_size=64, lr=4e-4, clip_eps=0.2, vf_coef=0.5,
                  ent_coef=0.01, max_grad_norm=0.5, num_iterations=5000,
-                 norm_adv=True, clip_vloss=True, target_kl=0.005, anneal_lr=True,
+                 norm_adv=True, clip_vloss=True, target_kl=0.005, anneal_lr=False,
                  run_name=None, store_model=False,
                  #PPG params:
-                 N_pi =16, E_pi=1, E_v=6, E_aux = 6, aux_minibatch_size=10, beta_clone=0.5
+                 N_pi =16, E_pi=1, E_v=1, E_aux = 4, aux_minibatch_size=64, beta_clone=1
                  ):
+        """lr 4e-4. Compromise between PPG paper (procgen) 5e-4 and tuned Mujoco 3e-4"""
 
         self.envs = envs
         self.hidden_dim = hidden_dim
@@ -62,6 +87,7 @@ class PPG:
 
         if wandb.run:
             wandb.config.update({
+                "algorithm": "PPG",
                 "hidden_dim": hidden_dim,
                 "obs_dim": self.obs_dim,
                 "act_dim": self.act_dim,
@@ -80,25 +106,26 @@ class PPG:
                 "norm_adv": norm_adv,
                 "num_iterations": num_iterations,
                 "clip_vloss": clip_vloss,
-                "optimizer_type": "adam"
+                "optimizer_type": "adam",
+                #PPG:
+                "N_pi": N_pi,
+                "E_pi": E_pi,
+                "E_v": E_v,
+                "E_aux": E_aux,
+                "aux_minibatch_size": aux_minibatch_size,
+                "beta_clone": beta_clone,
             }, allow_val_change=True)
 
     def train(self):
-        agent = PhasicVanillaModel(envs=self.envs, hidden_dim=self.hidden_dim)
+        agent = PhasicValueModel(act_dim=self.act_dim, obs_dim=self.obs_dim, hidden_dim=self.hidden_dim)
         optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
 
         runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
         global_steps = 0
 
-        #phase consists of policy and aux phase
-        for phase in range(1, self.num_iterations +1):
-            print(f"phase: {phase} of {self.num_iterations}")
-            buffer_B = {
-                "obs": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.obs_dim), dtype=torch.float32),
-                "vtarg": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs), dtype=torch.float32),
-                "old_mean": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.act_dim), dtype=torch.float32),
-                "old_logstd": torch.empty((self.N_pi, self.rollout_size * self.envs.num_envs, self.act_dim), dtype=torch.float32),
-            }
+        for phase in range(1, self.num_iterations +1): #phase consists of policy and aux phase
+            print(f"phase: {phase} of {self.num_iterations} - marked as purple outer loop in paper")
+            buffer_B = _Buffer_B(N_pi=self.N_pi, rollout_size=self.rollout_size,num_envs=self.envs.num_envs, obs_dim=self.obs_dim, act_dim=self.act_dim)
 
             if self.anneal_lr:
                 frac = 1.0 - (phase / self.num_iterations)
@@ -109,34 +136,23 @@ class PPG:
             print('--- start policy phase ---')
             for iteration in range(self.N_pi):
                 buffer, global_steps = runner.run(self.rollout_size, global_steps, agent, is_phasic=True)
-                #store if model is the best yet
-                if self.store_model:
+                if self.store_model: #store if model is the best yet
                     if buffer["ep_rewards_mean"] > self.best_ep_mean:
                         self.best_ep_mean = buffer["ep_rewards_mean"]
-                        print('----- storing new model -----')
-                        print(buffer["ep_rewards_mean"])
+                        print(f'----- storing new model  with mean {buffer["ep_rewards_mean"]}-----')
                         self._save_model(iteration, global_steps, agent, optim)
 
                 advantages, returns = gae_from_rollout(buffer, rollout_size=self.rollout_size, gamma=self.gamma, gae_lambda=self.gae_lambda)
 
-                # flatten the batch: [rollout, envs] -> [rollout * envs]
-                b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_pd_means, b_pd_stds = self._flatten_batch(buffer, advantages, returns)
-                buffer_B["obs"][iteration] = b_obs
-                buffer_B["vtarg"][iteration] = b_returns
-                buffer_B["old_mean"][iteration] = b_pd_means
-                buffer_B["old_logstd"][iteration] = b_pd_stds
+                # flatten the batch: [rollout, envs] -> [rollout * envs] -> make sample MORE IID-ish
+                b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_old_means, b_old_stds = self._flatten_batch(buffer, advantages, returns)
+                buffer_B.store(iteration, b_obs, b_returns, b_old_means, b_old_stds) # in paper: ONLY (s_t, V_t^targ
 
                 for epoch in range(self.E_pi):
                     self._policy_update(agent, optim, b_obs, b_actions, b_logprobs, b_advantages, global_steps)
 
                 for epoch in range(self.E_v):
                     self._value_update(agent, optim, b_obs, b_returns, b_values, global_steps)
-
-            # y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-            # var_y = np.var(y_true)
-            # explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-            # if wandb.run:
-            #     wandb.log({"losses/explained_variance": explained_var}, step=global_steps)
 
             #auxiliary phase
             print('--- start aux phase ---')
@@ -223,18 +239,13 @@ class PPG:
             nn.utils.clip_grad_norm_(agent.parameters(), self.max_grad_norm)
             optim.step()
 
-
         if wandb.run:
             wandb.log({
                 "losses/value_loss": v_loss.item(),
             }, step=global_steps)
 
     def _aux_train(self, buffer, agent, optim, global_step):
-        obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
-        v_targets = buffer["vtarg"].view(-1)
-        #actions = buffer["acts"] -> analytical KL div used
-        old_dist_mean = buffer["old_mean"].reshape((-1,) + (self.act_dim,))
-        old_dist_std = buffer["old_logstd"].reshape((-1,) + (self.act_dim,))
+        obs, v_targets, old_dist_mean, old_dist_std = buffer.get_flattened()
 
         buffer_len = obs.shape[0]
         b_inds = np.arange(buffer_len)
@@ -244,7 +255,7 @@ class PPG:
             mb_inds = b_inds[start:end]
             new_pd, _, aux = agent(obs[mb_inds])
             loss_dict = {}
-            old_pd = Normal(loc=old_dist_mean[mb_inds], scale=old_dist_std[mb_inds].exp())
+            old_pd = Normal(loc=old_dist_mean[mb_inds], scale=old_dist_std[mb_inds])
             loss_dict["pol_distance"] = kl_divergence(old_pd, new_pd).sum(-1).mean()
             loss_dict.update(agent.compute_aux_loss(aux, v_targets[mb_inds]))
 
@@ -258,11 +269,6 @@ class PPG:
             optim.zero_grad()
             loss.backward()
             optim.step()
-
-    def _is_vector_env(self):
-        if isinstance(self.envs, VectorEnv):
-            return True
-        return False
 
     def _save_model(self, iteration, global_steps, agent, optim):
         ckpt_path = self.ckpt_dir / f"{self.run_name}_best.pt"
@@ -282,7 +288,7 @@ class PPG:
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = buffer["val"].reshape(-1)
-        b_means = buffer["old_pd_mean"].reshape((-1,) + (self.act_dim,))
-        b_logstds = buffer["old_pd_std"].reshape((-1,) + (self.act_dim,))
+        b_old_means = buffer["old_pd_mean"].reshape((-1,) + (self.act_dim,))
+        b_old_stds = buffer["old_pd_std"].reshape((-1,) + (self.act_dim,))
 
-        return b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_means, b_logstds
+        return b_obs, b_logprobs, b_actions, b_advantages, b_returns, b_values, b_old_means, b_old_stds

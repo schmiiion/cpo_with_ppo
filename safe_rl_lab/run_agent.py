@@ -3,22 +3,28 @@ import torch
 
 # OWN
 from safe_rl_lab.envs.wrappers import make_env
-from safe_rl_lab.models.agent import Agent
+from safe_rl_lab.models.actor_critic import ActorCritic
 from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 
 
 
 if __name__ == '__main__':
-    run_name = f"checkpoints/SafetyRacecarGoal2-v0-shared-0.0003-1763299753_best.pt"
-    env_id = re.search(r'(?<=/)([^-]+-[^-]+)', run_name).group(1)
+    run_name = "checkpoints/SafetyRacecarGoal2-v0-shared-0.0003-1763299753_best.pt"
+    #Crazy doggo
+    # run_name = "checkpoints/PPO-SafetyDoggoGoal0-v0-shared-0.0003-1764583547_best.pt"
+    # run_name = "checkpoints/PPO-SafetyPointGoal2-v0-shared-0.0003-1764769984_best.pt"
+    # env_id = re.search(r'(?<=/)([^-]+-[^-]+)', run_name).group(1)
+    env_id = "SafetyRacecarGoal2-v0"
     print(f"env_id: {env_id}")
 
     capture_video = False
     env = make_env(env_id, 1, 1,capture_video, run_name, 0.99)()
 
+    obs_dim = env.observation_space.shape[-1]
+    act_dim = env.action_space.shape[-1]
     hidden_dim = 64
     if "shared" in run_name:
-        agent = SharedBackboneAgent(env, hidden_dim)
+        agent = ActorCritic(act_dim=act_dim, obs_dim=obs_dim, hidden_dim=hidden_dim)
     elif "separate" in run_name:
         pass
     else:
@@ -27,6 +33,8 @@ if __name__ == '__main__':
     # Load check<point
     checkpoint = torch.load(run_name, map_location="cpu")
     state_dict = checkpoint.get("model_state_dict", checkpoint)
+    state_dict['actor_log_std'] = state_dict.pop('actor_logstd')
+
     agent.load_state_dict(state_dict)
     agent.eval()
 

@@ -31,7 +31,7 @@ class VectorRunner:
         if is_phasic:
             pd_mean_buf = torch.empty((num_steps, N, *self.act_dims), dtype=torch.float32, device=self.device)
             pd_std_buf = torch.empty((num_steps, N, *self.act_dims), dtype=torch.float32, device=self.device)
-        ep_rewards = []
+        ep_rewards, ep_lengths, ep_costs = [], [], []
 
         for step in range(0, num_steps):
             global_step += self.num_envs
@@ -50,42 +50,38 @@ class VectorRunner:
                 val_buf[step] = value.flatten()
                 logprob = info_dict["logp"]
 
-            #Monitor actions????
-            # a = action.detach().cpu().numpy()
-            # low, high = self.envs.single_action_space.low, self.envs.single_action_space.high
-            # count out-of-bounds samples
-            # too_low = (a < low).sum()
-            # too_high = (a > high).sum()
-            # total = np.prod(a.shape)
-            # frac_oob = (too_low + too_high) / total
-            #print(f"Out-of-bounds actions: {frac_oob * 100:.2f}%")
-
             act_buf[step] = action
             logprob_buf[step] = logprob
 
             obs_next, reward, terminations, truncations, infos = self.envs.step(action.detach().cpu().numpy())
             next_done = np.logical_or(terminations, truncations)
             rew_buf[step] = torch.tensor(reward).view(-1)
-            cost_buf[step] = torch.tensor(infos["cost"])
+            cost_buf[step] = torch.as_tensor(infos["cost"], dtype=torch.float32, device=self.device)
             self.obs, self.done = torch.Tensor(obs_next), torch.Tensor(next_done)
 
             if "final_info" in infos: # wenn der key da ist
                 for info in infos["final_info"]: #drauf zugreifen und iterieren
                     if info and "episode" in info:
                         ep_rewards.append(float(info["episode"]["r"]))
+                        ep_lengths.append(float(info["episode"]["l"]))
+                        ep_costs.append(float(info["final_cost_sum"]))
                         if wandb.run:
-                            wandb.log({"charts/episodic_return": info["episode"]["r"]}, step=global_step)
+                            wandb.log({
+                                "charts/episodic_return": info["episode"]["r"],
+                                "charts/episodic_length": info["episode"]["l"],
+                                "charts/episodic_cost": info["final_cost_sum"],
+                            }, step=global_step)
 
         v_last = agent.v(self.obs)
         done_last = self.done
         ep_rewards_mean = sum(ep_rewards) / len(ep_rewards) if ep_rewards else 0.0
 
         if ep_rewards and wandb.run:
-            mean_r = float(np.mean(ep_rewards))
-            std_r = float(np.std(ep_rewards))
             wandb.log({
-                "charts/ep_return_mean": mean_r,
-                "charts/ep_return_std": std_r,
+                "charts/ep_return_mean": float(np.mean(ep_rewards)),
+                "charts/ep_length_mean": float(np.mean(ep_lengths)),
+                "charts/ep_return_std": float(np.std(ep_rewards)),
+                "charts/ep_cost_mean": float(np.mean(ep_costs)),
             }, step=global_step)
 
         return_dict = {

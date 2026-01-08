@@ -16,7 +16,7 @@ from safe_rl_lab.algo.ppo import PPO
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gym_id', type=str, default='SafetyRacecarGoal2-v0')
+    parser.add_argument('--gym_id', type=str, default='SafetyPointGoal2-v0')
     # parser.add_argument('--gym_id', type=str, default='SafetyPointGoal0-v0')
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--track', type=lambda x:bool(strtobool(x)), default=False, nargs='?', const=True,
@@ -34,9 +34,8 @@ if __name__ == '__main__':
     args = parse_args()
     print(args)
     model_arch = "shared"
-    # model_arch = "separate"
     squash_actions = True
-    run_name = f"{args.gym_id}-{model_arch}-{args.lr}-{int(time.time())}"
+    run_name = f"PPO-{args.gym_id}-{model_arch}-{args.lr}-{int(time.time())}"
     if args.track:
         wandb.init(
             entity=args.wandb_entity,

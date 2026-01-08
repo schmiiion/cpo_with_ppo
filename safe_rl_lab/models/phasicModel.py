@@ -9,24 +9,9 @@ def _layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     nn.init.constant_(layer.bias, bias_const)
     return layer
 
-def _get_env_dims(env):
-    # Handle both single and vectorized envs
-    if hasattr(env, "single_observation_space"):
-        obs_space = env.single_observation_space
-        act_space = env.single_action_space
-    else:
-        obs_space = env.observation_space
-        act_space = env.action_space
-
-    obs_dim = int(np.prod(obs_space.shape))
-    act_dim = int(np.prod(act_space.shape))
-    return obs_dim, act_dim
-
-class PhasicVanillaModel(PhasicModel):
-    def __init__(self, envs, hidden_dim):
+class PhasicValueModel(PhasicModel):
+    def __init__(self, obs_dim, act_dim, hidden_dim):
         super().__init__()
-        obs_dim, act_dim = _get_env_dims(envs)
-
         self.policy_backbone = nn.Sequential(
             _layer_init(nn.Linear(obs_dim, hidden_dim)),
             nn.Tanh(),

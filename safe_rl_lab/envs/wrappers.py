@@ -16,11 +16,11 @@ def make_env(gym_id, seed, idx, capture_video, run_name, gamma):
         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = gym.wrappers.NormalizeReward(env, gamma=gamma)
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        if capture_video and idx == 0:
+        if capture_video and idx == 0 and False: #TODO hardcoded video omitting
             env = gym.wrappers.RecordVideo(
                 env,
                 f"logs/videos/{run_name}",
-                episode_trigger=lambda ep: ep % 30 == 0)
+                episode_trigger=lambda ep: ep % 50 == 0)
         return env
     return thunk
 
