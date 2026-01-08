@@ -8,24 +8,26 @@ def gae_from_rollout(buf, rollout_size, gamma, gae_lambda):
         values = buf["val"]  # [T] or [T, N]
         dones = buf["done"]  # [T]  or [T, N] -> (true terminal only)
         next_value = buf["v_last"]  # scalar of [N]
+        next_cost = buf["cpred_last"]
         next_done = buf["done_last"]
+        costs = buf["cost"]
+        cpreds = buf["cpred"]
         advantages = torch.zeros_like(rewards)
+        advantages_cost = torch.zeros_like(costs)
         lastgaelam = 0
 
-        # single = (rew.dim() == 1)
-        # if single:   # add another dimension for the single env case
-        #     rew = rew.unsqueeze(1)
-        #     val = val.unsqueeze(1)
-        #     done = done.unsqueeze(1)
-        #     v_last = v_last.unsqueeze(0) if v_last.dim() == 1 else v_last
 
         for t in reversed(range(rollout_size)):
             if t == rollout_size - 1:
                 nextnonterminal = 1.0 - next_done
-                nextvalues = next_value.view(-1)
+                nextvalues = next_value
+                next_cost = next_cost
             else:
                 nextnonterminal = 1.0 - dones[t + 1]
                 nextvalues = values[t + 1]
+                next_costs = costs[t + 1]
             delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t] #one step TD error
+            delta_cost = costs[t] + gamma * next_costs * nextnonterminal - cpreds[t]
             advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-        return advantages, advantages + values
+            advantages_cost[t] = lastgaelam = delta_cost + gamma * gae_lambda * nextnonterminal * lastgaelam
+        return advantages, advantages + values, advantages_cost, advantages_cost +costs

@@ -2,10 +2,12 @@ import torch
 import numpy as np
 import wandb
 
+from safe_rl_lab.models import cost_critic
+
 
 class VectorRunner:
 
-    def __init__(self, envs, agent, obs_dims, act_dims, device="cpu"):
+    def __init__(self, envs, agent, obs_dims, act_dims, cost_critic=None, device="cpu"):
         self.envs = envs
         self.agent = agent
         self.obs_dims = (obs_dims,) if isinstance(obs_dims, int) else tuple(obs_dims)
@@ -15,6 +17,7 @@ class VectorRunner:
         self.done = torch.zeros(envs.num_envs)
         self.obs = torch.as_tensor(self.obs, dtype=torch.float32, device=self.device)
         self.num_envs = envs.num_envs
+        self.cost_critic = cost_critic
 
 
     @torch.inference_mode()
@@ -27,6 +30,7 @@ class VectorRunner:
         val_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         rew_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         cost_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
+        cpred_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         done_buf = torch.empty((num_steps, N), dtype=torch.float32, device=self.device)
         if is_phasic:
             pd_mean_buf = torch.empty((num_steps, N, *self.act_dims), dtype=torch.float32, device=self.device)
@@ -50,6 +54,10 @@ class VectorRunner:
                 val_buf[step] = value.flatten()
                 logprob = info_dict["logp"]
 
+                if self.cost_critic is not None:
+                    cpred = self.cost_critic(self.obs).flatten()
+                    cpred_buf[step] = cpred
+
             act_buf[step] = action
             logprob_buf[step] = logprob
 
@@ -72,8 +80,10 @@ class VectorRunner:
                                 "charts/episodic_cost": info["final_cost_sum"],
                             }, step=global_step)
 
-        v_last = agent.v(self.obs)
+        v_last = agent.v(self.obs).flatten()
         done_last = self.done
+        if self.cost_critic is not None:
+            cpred_last = self.cost_critic(self.obs).flatten()
         ep_rewards_mean = sum(ep_rewards) / len(ep_rewards) if ep_rewards else 0.0
 
         if ep_rewards and wandb.run:
@@ -99,5 +109,8 @@ class VectorRunner:
         if is_phasic:
             return_dict["old_pd_mean"] = pd_mean_buf
             return_dict["old_pd_std"] = pd_std_buf
+        if self.cost_critic is not None:
+            return_dict["cpred"] = cpred_buf
+            return_dict["cpred_last"] = cpred_last
 
         return return_dict, global_step

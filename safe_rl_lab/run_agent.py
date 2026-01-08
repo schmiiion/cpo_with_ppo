@@ -9,12 +9,13 @@ from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 
 
 if __name__ == '__main__':
-    run_name = "checkpoints/SafetyRacecarGoal2-v0-shared-0.0003-1763299753_best.pt"
+    # run_name = "checkpoints/SafetyRacecarGoal2-v0-shared-0.0003-1763299753_best.pt"
     #Crazy doggo
-    # run_name = "checkpoints/PPO-SafetyDoggoGoal0-v0-shared-0.0003-1764583547_best.pt"
+    run_name = "checkpoints/PPO-SafetyDoggoGoal0-v0-shared-0.0003-1764583547_best.pt"
     # run_name = "checkpoints/PPO-SafetyPointGoal2-v0-shared-0.0003-1764769984_best.pt"
     # env_id = re.search(r'(?<=/)([^-]+-[^-]+)', run_name).group(1)
-    env_id = "SafetyRacecarGoal2-v0"
+    # env_id = "SafetyRacecarGoal2-v0"
+    env_id = "SafetyDoggoGoal0-v0"
     print(f"env_id: {env_id}")
 
     capture_video = False
@@ -33,7 +34,7 @@ if __name__ == '__main__':
     # Load check<point
     checkpoint = torch.load(run_name, map_location="cpu")
     state_dict = checkpoint.get("model_state_dict", checkpoint)
-    state_dict['actor_log_std'] = state_dict.pop('actor_logstd')
+    # state_dict['actor_log_std'] = state_dict.pop('actor_logstd')
 
     agent.load_state_dict(state_dict)
     agent.eval()
