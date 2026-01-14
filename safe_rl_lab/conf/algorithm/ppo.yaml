@@ -1,0 +1,3 @@
+name: "ppo"
+lr: 3e-4
+use_cost: false

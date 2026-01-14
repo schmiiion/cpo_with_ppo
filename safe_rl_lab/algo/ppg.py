@@ -4,12 +4,11 @@ import numpy as np
 import torch
 import wandb
 import torch.nn as nn
-from gymnasium.vector import VectorEnv
 from torch.distributions import kl_divergence, Normal
 
 #### OWN
 from safe_rl_lab.models.phasicModel import PhasicValueModel
-from safe_rl_lab.runners.vector_runner import VectorRunner
+from safe_rl_lab.utils.vector_runner import VectorRunner
 from safe_rl_lab.utils.gae import gae_from_rollout
 
 
@@ -120,7 +119,7 @@ class PPG:
         agent = PhasicValueModel(act_dim=self.act_dim, obs_dim=self.obs_dim, hidden_dim=self.hidden_dim)
         optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
 
-        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
+        runner = VectorRunner(self.envs, agent)
         global_steps = 0
 
         for phase in range(1, self.num_iterations +1): #phase consists of policy and aux phase

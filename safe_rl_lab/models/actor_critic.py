@@ -1,40 +1,63 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 from torch.distributions import Normal
-import numpy as np
-from safe_rl_lab.models.abstractBaseClasses import PpoModel
+from abc import ABC, abstractmethod
+from safe_rl_lab.utils.model_utils import build_mlp_network
 
-#####Erkenntnisse:
-# Trennung Optimization und Inferenz
-# Rollout: Collect Data of policy, NOT training -> kein Gradient Tracking
+class ActorCriticBase(nn.Module, ABC):
+    """
+    Doesnt care about PPO or PPG. Just: Input -> Dist, Value
+    """
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
+    @abstractmethod
+    def forward(self, obs):
+        """:returns (distribution, value prediction)"""
+        pass
 
-class ActorCritic(PpoModel):
 
-    def __init__(self, *, obs_dim, act_dim, hidden_dim=64):
+class SharedActorCritic(ActorCriticBase):
+    """Shared Backbone Architecture
+    :arg obs_dim: int
+    :arg act_dim: int
+    :arg hidden_sizes: List of hidden sizes
+    :arg activation: str
+    """
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
-        self.backbone = nn.Sequential(
-          layer_init(nn.Linear(obs_dim, hidden_dim)),
-          nn.Tanh(),
-          layer_init(nn.Linear(hidden_dim, hidden_dim)),
-          nn.Tanh(),
-        )
-        self.actor_mean = layer_init(nn.Linear(hidden_dim, act_dim), std=0.01)
-        self.actor_log_std = nn.Parameter(torch.zeros(1, act_dim))
-        self.critic = layer_init(nn.Linear(hidden_dim, 1), std=1)
+        self.backbone = build_mlp_network([obs_dim] + hidden_sizes, hidden_sizes, activation)
 
+        self.actor_head = nn.Linear(hidden_sizes[-1], act_dim)
+        self.critic_head = nn.Linear(hidden_sizes[-1], 1)
+        self.log_std = nn.Parameter(torch.zeros(act_dim))
 
     def forward(self, obs):
-        h = self.backbone(obs)
-        action_mean = self.actor_mean(h)
-        action_log_std = self.actor_log_std.expand_as(action_mean)
-        action_log_std = action_log_std.clamp(-20, 2)
-        action_std = torch.exp(action_log_std)
-        pdf = Normal(action_mean, action_std)
+        hidden = self.backbone(obs)
 
-        vpred = self.critic(h)
-        return pdf, vpred, None
+        val = self.critic_head(hidden)
+
+        mu = self.actor_head(hidden)
+        std = torch.exp(self.log_std)
+        dist = Normal(mu, std)
+
+        return dist, val
+
+
+class DisjointActorCritic(ActorCriticBase):
+    """Disjoint Architecture (Preferred for PPG)"""
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        super().__init__()
+        self.actor_net = build_mlp_network(sizes=[obs_dim] + hidden_sizes + [act_dim], activation=activation)
+        self.critic_net = build_mlp_network(sizes=[obs_dim] + hidden_sizes + [1], activation=activation)
+        self.log_std = nn.Parameter(torch.zeros(act_dim))
+
+    def forward(self, obs):
+        # Value
+        val = self.critic_net(obs)
+
+        # Policy
+        mu = self.actor_net(obs)
+        std = torch.exp(self.log_std)
+        dist = Normal(mu, std)
+
+        return dist, val

@@ -11,12 +11,10 @@ from gymnasium.vector import VectorEnv
 
 #### OWN
 from safe_rl_lab.models.actor_critic import ActorCritic
-from safe_rl_lab.models.actor_critic_disjoint import ActorCriticDisjoint
 from safe_rl_lab.models.cost_critic import CostCritic
-from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 from safe_rl_lab.utils.gae import gae_from_rollout
 from safe_rl_lab.utils.lagrange import Lagrange
-from safe_rl_lab.runners.vector_runner import VectorRunner
+from safe_rl_lab.utils.vector_runner import VectorRunner
 
 class PPOLag:
 
@@ -104,7 +102,7 @@ class PPOLag:
         cost_critic_optim = torch.optim.Adam(cost_critic.parameters(), lr=self.lr, eps=1e-5)
         self.lagrange = Lagrange(cost_limit=self.cost_limit, lagrangian_multiplier_init=0.001, lambda_lr=self.lambda_lr)
 
-        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim, cost_critic)
+        runner = VectorRunner(self.envs, agent)
 
         global_steps, last_global_step = 0, 0
         for iteration in range(1, self.num_iterations +1):

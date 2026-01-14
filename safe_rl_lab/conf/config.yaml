@@ -1,0 +1,4 @@
+total_steps: 10000000 # How many steps in the runner to take until stopping the learning?
+rollout_size: 264 #rollout size of steps for each buffer
+sps_logging_interval: 10
+

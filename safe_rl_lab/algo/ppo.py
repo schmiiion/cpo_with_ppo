@@ -11,10 +11,9 @@ from gymnasium.vector import VectorEnv
 
 #### OWN
 from safe_rl_lab.models.actor_critic import ActorCritic
-from safe_rl_lab.models.actor_critic_disjoint import ActorCriticDisjoint
 from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 from safe_rl_lab.utils.gae import gae_from_rollout
-from safe_rl_lab.runners.vector_runner import VectorRunner
+from safe_rl_lab.utils.vector_runner import VectorRunner
 
 class PPO:
 
@@ -95,7 +94,8 @@ class PPO:
             raise RuntimeError("Invalid agent architecture")
 
         optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
-        runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim)
+        runner = VectorRunner(self.envs, agent)
+
         global_steps, last_global_step = 0, 0
         for iteration in range(1, self.num_iterations +1):
             print(f"iteration: {iteration} of {self.num_iterations}")
