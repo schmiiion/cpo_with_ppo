@@ -1,33 +1,50 @@
 import torch
 
+
 @torch.no_grad()
 def gae_from_rollout(buf, rollout_size, gamma, gae_lambda):
     """:returns advantages, returns with same shape as buffer["reward"] / ["val"]"""
     with torch.no_grad():
-        rewards = buf["rew"]  # [T] or [T, N]
-        values = buf["val"]  # [T] or [T, N]
-        dones = buf["done"]  # [T]  or [T, N] -> (true terminal only)
-        next_value = buf["v_last"]  # scalar of [N]
-        next_cost = buf["cpred_last"]
-        next_done = buf["done_last"]
-        costs = buf["cost"]
-        cpreds = buf["cpred"]
-        advantages = torch.zeros_like(rewards)
-        advantages_cost = torch.zeros_like(costs)
-        lastgaelam = 0
+        rewards = buf["rew"]
+        vpreds = buf["vpred"]
+        dones = buf["done"]
 
+        # Reward bootstrapping
+        next_value = buf["v_last"]
+        next_done = buf["done_last"]
+
+        # Cost bootstrapping
+        costs = buf["cost"]  # Raw signal
+        cpreds = buf["cpred"]  # Critic predictions
+        next_cpred = buf["cpred_last"]  # Bootstrapped value
+
+        # Output buffers
+        adv_r = torch.zeros_like(rewards)
+        adv_c = torch.zeros_like(costs)
+
+        lastgaelam_r = 0
+        lastgaelam_c = 0
 
         for t in reversed(range(rollout_size)):
             if t == rollout_size - 1:
                 nextnonterminal = 1.0 - next_done
-                nextvalues = next_value
-                next_cost = next_cost
+                next_val_r = next_value
+                next_val_c = next_cpred
             else:
                 nextnonterminal = 1.0 - dones[t + 1]
-                nextvalues = values[t + 1]
-                next_costs = costs[t + 1]
-            delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t] #one step TD error
-            delta_cost = costs[t] + gamma * next_costs * nextnonterminal - cpreds[t]
-            advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-            advantages_cost[t] = lastgaelam = delta_cost + gamma * gae_lambda * nextnonterminal * lastgaelam
-        return advantages, advantages + values, advantages_cost, advantages_cost +costs
+                next_val_r = vpreds[t + 1]
+
+                next_val_c = cpreds[t + 1]
+
+            # Reward GAE
+            delta_r = rewards[t] + gamma * next_val_r * nextnonterminal - vpreds[t]
+            adv_r[t] = lastgaelam_r = delta_r + gamma * gae_lambda * nextnonterminal * lastgaelam_r
+
+            # Cost GAE
+            delta_c = costs[t] + gamma * next_val_c * nextnonterminal - cpreds[t]
+            adv_c[t] = lastgaelam_c = delta_c + gamma * gae_lambda * nextnonterminal * lastgaelam_c
+
+        returns_r = adv_r + vpreds
+        returns_c = adv_c + cpreds
+
+        return adv_r, returns_r, adv_c, returns_c

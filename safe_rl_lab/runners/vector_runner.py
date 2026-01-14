@@ -73,32 +73,33 @@ class VectorRunner:
                         ep_rewards.append(float(info["episode"]["r"]))
                         ep_lengths.append(float(info["episode"]["l"]))
                         ep_costs.append(float(info["final_cost_sum"]))
-                        if wandb.run:
-                            wandb.log({
-                                "charts/episodic_return": info["episode"]["r"],
-                                "charts/episodic_length": info["episode"]["l"],
-                                "charts/episodic_cost": info["final_cost_sum"],
-                            }, step=global_step)
+                        # if wandb.run:
+                        #     wandb.log({
+                        #         "charts/episodic_return": info["episode"]["r"],
+                        #         #"charts/episodic_length": info["episode"]["l"],
+                        #         "charts/episodic_cost": info["final_cost_sum"],
+                        #     }, step=global_step)
 
         v_last = agent.v(self.obs).flatten()
         done_last = self.done
         if self.cost_critic is not None:
             cpred_last = self.cost_critic(self.obs).flatten()
         ep_rewards_mean = sum(ep_rewards) / len(ep_rewards) if ep_rewards else 0.0
+        ep_costs_mean = sum(ep_costs) / len(ep_costs) if ep_costs else 0.0
 
         if ep_rewards and wandb.run:
             wandb.log({
-                "charts/ep_return_mean": float(np.mean(ep_rewards)),
-                "charts/ep_length_mean": float(np.mean(ep_lengths)),
+                "charts/ep_return_mean": ep_rewards_mean,
+                "charts/ep_length_mean": sum(ep_lengths) / len(ep_lengths) if ep_lengths else 0.0,
                 "charts/ep_return_std": float(np.std(ep_rewards)),
-                "charts/ep_cost_mean": float(np.mean(ep_costs)),
+                "charts/ep_cost_mean": ep_costs_mean,
             }, step=global_step)
 
         return_dict = {
             "obs": obs_buf,
             "act": act_buf,
             "logprob": logprob_buf,
-            "val": val_buf,
+            "vpred": val_buf,
             "rew": rew_buf,
             "cost": cost_buf,
             "done": done_buf,
@@ -112,5 +113,6 @@ class VectorRunner:
         if self.cost_critic is not None:
             return_dict["cpred"] = cpred_buf
             return_dict["cpred_last"] = cpred_last
+            return_dict["ep_cost_mean"] = ep_costs_mean
 
         return return_dict, global_step

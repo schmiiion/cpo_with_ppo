@@ -15,6 +15,7 @@ from safe_rl_lab.models.actor_critic_disjoint import ActorCriticDisjoint
 from safe_rl_lab.models.cost_critic import CostCritic
 from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 from safe_rl_lab.utils.gae import gae_from_rollout
+from safe_rl_lab.utils.lagrange import Lagrange
 from safe_rl_lab.runners.vector_runner import VectorRunner
 
 class PPOLag:
@@ -25,6 +26,7 @@ class PPOLag:
                  minibatch_size=64, lr=3e-4, clip_eps=0.2, vf_coef=0.5,
                  ent_coef=0.01, max_grad_norm=0.5, num_iterations=10000,
                  norm_adv=True, clip_vloss=True, target_kl=0.005, anneal_lr=True,
+                 cost_limit=50, lambda_lr = 5e-2,
                  run_name=None, store_model=False):
         self.envs = envs
         self.model_arch = model_arch
@@ -61,6 +63,9 @@ class PPOLag:
         self.last_log_time = time.time()
         self.last_global_step = 0
 
+        self.cost_limit = cost_limit
+        self.lagrange = None
+        self.lambda_lr = lambda_lr
 
         if wandb.run:
             wandb.config.update({
@@ -84,7 +89,8 @@ class PPOLag:
                 "norm_adv": norm_adv,
                 "num_iterations": num_iterations,
                 "clip_vloss": clip_vloss,
-                "optimizer_type": "adam"
+                "optimizer_type": "adam",
+                "cost_limit": cost_limit,
             }, allow_val_change=True)
 
     def train(self):
@@ -95,7 +101,11 @@ class PPOLag:
         cost_critic = CostCritic(self.obs_dim, hidden_sizes=[self.hidden_dim, self.hidden_dim], activation='tanh')
 
         optim = torch.optim.Adam(agent.parameters(), lr=self.lr, eps=1e-5)
+        cost_critic_optim = torch.optim.Adam(cost_critic.parameters(), lr=self.lr, eps=1e-5)
+        self.lagrange = Lagrange(cost_limit=self.cost_limit, lagrangian_multiplier_init=0.001, lambda_lr=self.lambda_lr)
+
         runner = VectorRunner(self.envs, agent, self.obs_dim, self.act_dim, cost_critic)
+
         global_steps, last_global_step = 0, 0
         for iteration in range(1, self.num_iterations +1):
             print(f"iteration: {iteration} of {self.num_iterations}")
@@ -113,32 +123,52 @@ class PPOLag:
             if self.store_model:
                 if buffer["ep_rewards_mean"] > self.best_ep_mean:
                     self.best_ep_mean = buffer["ep_rewards_mean"]
-                    print(f'----- storing new model with mean reward {buffer["ep_rewards_mean"]}')
+                    print(f'----- storing new model with mean reward {buffer["ep_rewards_mean"]} and cost {buffer["ep_cost_mean"]}')
+
                     self._save_model(iteration, global_steps, agent, optim)
 
-            advantages, returns = gae_from_rollout(buffer, self.rollout_size, self.gamma, self.gae_lambda)
+            adv_r, ret_r, adv_c, ret_c = gae_from_rollout(buffer, self.rollout_size, self.gamma, self.gae_lambda)
 
-            #flatten the batch
+            Jc = buffer["ep_cost_mean"]
+            if Jc == 0.0 and buffer["cost"].sum() > 0: # Fallback if no episode finished
+                print('#### Jc fallback used!')
+                # Rough estimate: (avg_step_cost) * (max_ep_len)
+                Jc = buffer["cost"].mean() * 1000  # assuming 1000 is max_ep_len
+
+            self.lagrange.update_lagrange_multiplier(Jc)
+            lambda_val = self.lagrange.lagrangian_multiplier.item()
+            adv_total = (adv_r - lambda_val * adv_c) / (1 + lambda_val)
+
+            if self.norm_adv:
+                adv_total = (adv_total - adv_total.mean()) / (adv_total.std() + 1e-8)
+
+            #Flatten the batch
             b_obs = buffer["obs"].reshape((-1,) + (self.obs_dim,))
-            b_logprobs = buffer["logprob"].reshape(-1)
             b_actions = buffer["act"].reshape((-1,) + (self.act_dim,))
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_values = buffer["val"].reshape(-1)
+            b_logprobs = buffer["logprob"].reshape(-1)
+            b_adv_total = adv_total.reshape(-1)
+            #reward data:
+            b_ret_r = ret_r.reshape(-1)
+            b_vpred = buffer["vpred"].reshape(-1)
+            #cost data:
+            b_ret_c = ret_c.reshape(-1)
+            b_cpred = buffer["cpred"].reshape(-1)
 
-            self._ppo_update(agent, optim, b_obs, b_actions, b_logprobs, b_advantages, b_returns, b_values, global_steps)
+            self._ppo_lag_update(agent, optim, cost_critic, cost_critic_optim, b_obs, b_actions, b_logprobs,
+                                 b_adv_total, b_ret_r, b_vpred, b_ret_c, b_cpred, global_steps)
 
-            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+            y_pred, y_true = b_vpred.cpu().numpy(), b_ret_r.cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
             if wandb.run:
                 wandb.log({"losses/explained_variance": explained_var}, step=global_steps)
 
 
-    def _ppo_update(self, agent, optim, b_obs, b_actions, b_logprobs, b_advantages, b_returns, b_values, global_steps):
+    def _ppo_lag_update(self, agent, optim, cost_critic, cost_critic_optim, b_obs, b_actions, b_logprobs, b_adv_total, b_ret_r, b_vpreds, b_ret_c, b_cpreds, global_steps):
         b_inds = np.arange(self.batch_size)
         clipfracs = []
-        v_loss, pg_loss, entropy_loss = None, None, None
+
+        v_loss_r_epoch, v_loss_c_epoch, pg_loss_epoch, entropy_loss_epoch = [], [], [], []
 
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
@@ -146,63 +176,86 @@ class PPOLag:
                 end = start + self.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                pdf, vpred, _ = agent(b_obs[mb_inds])
-                action_batch = b_actions[mb_inds]
-                new_log_probs = pdf.log_prob(action_batch).sum(dim=-1)
+                # ---------------------------------------------------------
+                # 1. Forward Passes
+                #Agent (Actor + Reward Critic)
+                pdf, vpred_r, _ = agent(b_obs[mb_inds])
+                #Cost Critic
+                vpred_c = cost_critic(b_obs[mb_inds]).flatten()
+
+                # ---------------------------------------------------------
+                # 2. Policy Loss (Actor)
+                new_log_probs = pdf.log_prob(b_actions[mb_inds]).sum(dim=-1)
                 old_log_probs = b_logprobs[mb_inds]
                 logratio = new_log_probs - old_log_probs
                 ratio = logratio.exp()
 
-                with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                with torch.no_grad(): # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > self.clip_eps).float().mean().item()]
 
-                mb_advantages = b_advantages[mb_inds]
-                if self.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                mb_advantages = b_adv_total[mb_inds]
+                # if self.norm_adv:
+                #     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                # Policy loss
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Value loss
-                newvalue = vpred.view(-1) #flatten to make compatible
-                if self.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -self.clip_eps,
-                        self.clip_eps,
-                    )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-                else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                # ---------------------------------------------------------
+                # 3. Value Loss (Reward Critic)
+                newvalue_r = vpred_r.view(-1) #flatten to make compatible
+                v_loss_unclipped = (newvalue_r - b_ret_r[mb_inds]) ** 2
+                v_clipped = b_vpreds[mb_inds] + torch.clamp(
+                    newvalue_r - b_vpreds[mb_inds], -self.clip_eps, self.clip_eps,
+                )
+                v_loss_clipped = (v_clipped - b_ret_r[mb_inds]) ** 2
+                v_loss_r = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
 
+                # ---------------------------------------------------------
+                # 4. Value Loss (Cost Critic)
+                v_loss_unclipped_c = (vpred_c - b_ret_c[mb_inds]) ** 2
+                v_clipped_c = b_cpreds[mb_inds] + torch.clamp(
+                    vpred_c - b_cpreds[mb_inds], -self.clip_eps, self.clip_eps
+                )
+                v_loss_clipped_c = (v_clipped_c - b_ret_c[mb_inds]) ** 2
+                v_loss_c = 0.5 * torch.max(v_loss_unclipped_c, v_loss_clipped_c).mean()
+
+                # ---------------------------------------------------------
+                # 5. Optimization Steps
                 entropy_loss = pdf.entropy().mean()
-                loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
+
+                #1. Update Agent
+                loss_agent = pg_loss - self.ent_coef * entropy_loss + v_loss_r * self.vf_coef
 
                 optim.zero_grad()
-                loss.backward()
+                loss_agent.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), self.max_grad_norm)
                 optim.step()
+
+                #2. Update Cost Critic
+                cost_critic_optim.zero_grad()
+                v_loss_c.backward()
+                nn.utils.clip_grad_norm_(cost_critic.parameters(), self.max_grad_norm)
+                cost_critic_optim.step()
+
+                #Logging
+                v_loss_r_epoch.append(v_loss_r.item())
+                v_loss_c_epoch.append(v_loss_c.item())
+                pg_loss_epoch.append(pg_loss.item())
+                entropy_loss_epoch.append(entropy_loss.item())
 
             if self.target_kl is not None and approx_kl > self.target_kl:
                 break
 
         if wandb.run:
             wandb.log({
-                # "charts/learning_rate": optim.param_groups[0]["lr"],
-                "losses/value_loss": v_loss.item(),
-                # "losses/policy_loss": pg_loss.item(),
-                "losses/entropy": entropy_loss.item(),
-                # "losses/old_approx_kl": old_approx_kl.item(),
+                "losses/value_loss_reward": np.mean(v_loss_r_epoch),
+                "losses/value_loss_cost": np.mean(v_loss_c_epoch),
+                "losses/policy_loss": np.mean(pg_loss_epoch),
+                "losses/entropy": np.mean(entropy_loss_epoch),
                 "losses/approx_kl": approx_kl.item(),
-                # "losses/clipfrac": np.mean(clipfracs),
             }, step=global_steps)
 
 
@@ -227,9 +280,6 @@ class PPOLag:
         penalty = self._lagrange.lagrangian_multiplier.item()
         return (adv_r - penalty * adv_c) / (1 + penalty)
 
-
-
-
     def _is_vector_env(self):
         if isinstance(self.envs, VectorEnv):
             return True
@@ -252,7 +302,7 @@ class PPOLag:
         steps_diff = global_steps - self.last_global_step
         self.sps_window.append(steps_diff / elapsed_time)
         avg_sps = np.mean(self.sps_window)
-        print(f"avg sps: {avg_sps:.2f}")
+        #print(f"avg sps: {avg_sps:.2f}")
 
         if wandb.run:
             wandb.log({"charts/SPS_mean": avg_sps}, step=global_steps)

@@ -9,13 +9,13 @@ from safe_rl_lab.models.sharedBackboneAgent import SharedBackboneAgent
 
 
 if __name__ == '__main__':
-    # run_name = "checkpoints/SafetyRacecarGoal2-v0-shared-0.0003-1763299753_best.pt"
+    run_name = "checkpoints/PPOLag-SafetyCarGoal1-v0-shared-0.0003-1768254391_best.pt"
     #Crazy doggo
-    run_name = "checkpoints/PPO-SafetyDoggoGoal0-v0-shared-0.0003-1764583547_best.pt"
+    #run_name = "checkpoints/PPO-SafetyDoggoGoal0-v0-shared-0.0003-1764583547_best.pt"
     # run_name = "checkpoints/PPO-SafetyPointGoal2-v0-shared-0.0003-1764769984_best.pt"
     # env_id = re.search(r'(?<=/)([^-]+-[^-]+)', run_name).group(1)
     # env_id = "SafetyRacecarGoal2-v0"
-    env_id = "SafetyDoggoGoal0-v0"
+    env_id = "SafetyCarGoal1-v0"
     print(f"env_id: {env_id}")
 
     capture_video = False

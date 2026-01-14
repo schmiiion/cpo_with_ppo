@@ -1,0 +1,15 @@
+# config.yaml
+gym_id: "SafetyCarGoal1-v0"
+seed: 42
+total_timesteps: 2000000
+
+# Hyperparameters
+lr: 3e-4
+batch_size: 64
+cost_limit: 25
+
+# PID Params (for your upcoming feature)
+pid:
+  kp: 0.1
+  ki: 0.01
+  kd: 2.0
