@@ -16,11 +16,11 @@ def make_env(gym_id, seed, idx, capture_video, run_name, gamma):
         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = gym.wrappers.NormalizeReward(env, gamma=gamma)
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        if capture_video and idx == 0 and False: #TODO hardcoded video omitting
+        if capture_video and idx == 0: #TODO hardcoded video omitting
             env = gym.wrappers.RecordVideo(
                 env,
                 f"logs/videos/{run_name}",
-                episode_trigger=lambda ep: ep % 50 == 0)
+                episode_trigger=lambda ep: ep % 30 == 0)
         return env
     return thunk
 
@@ -38,14 +38,17 @@ class CostIntoInfo(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         self._cost_sum = 0.0
+        # print("#################################")
+        # print("wrapper created")
+        # print("#################################")
 
     def reset(self, **kwargs):
+        # print("-"*20)
+        # print("wrapper RESET")
+        # print("-"*20)
         obs, info = self.env.reset(**kwargs)
         self._cost_sum = 0.0
-        info = dict(info) if info is not None else {}
-        #enusre that keys exist at time 0
         info["cost"] = np.float32(0.0)
-        info["cost_sum"] = np.float32(self._cost_sum)
         return obs, info
 
     def step(self, action):
@@ -54,13 +57,12 @@ class CostIntoInfo(gym.Wrapper):
         #accumulate cost
         self._cost_sum += float(c)
 
-        info = dict(info) if info is not None else {}
-        #preserve any existing keys
+        assert c == info["cost_sum"]
         info["cost"] = np.float32(c)
-        info["cost_sum"] = np.float32(self._cost_sum)
 
         if terminated or truncated:
-            info["final_cost_sum"] = np.float32(self._cost_sum)
+            # print('o'*30)
+            info["acc_cost"] = np.float32(self._cost_sum)
             self._cost_sum = 0.0
 
         return obs, r, terminated, truncated, info

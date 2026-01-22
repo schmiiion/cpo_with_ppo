@@ -1,4 +1,17 @@
-total_steps: 10000000 # How many steps in the runner to take until stopping the learning?
-rollout_size: 264 #rollout size of steps for each buffer
-sps_logging_interval: 10
+defaults:
+  - _self_
+  - algo: ppo_lag
+  - env: safety_point
 
+# Global Runner Settings
+seed: 42
+total_steps: 10000000
+sps_logging_interval: 10
+device: "cpu"
+
+# WANDB (Global logging settings)
+wandb:
+  entity: "safe_rl_lab"
+  project_name: "ppo_in_sg"
+  group: null
+  run_name: null

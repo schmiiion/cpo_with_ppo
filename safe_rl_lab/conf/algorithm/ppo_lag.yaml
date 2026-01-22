@@ -1,3 +1,0 @@
-name: "ppo_lag"
-lr: 3e-4
-use_cost: true

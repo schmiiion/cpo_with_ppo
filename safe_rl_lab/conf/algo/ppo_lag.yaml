@@ -1,0 +1,34 @@
+name: "PPO_Lag"
+
+#algo hyperparams
+lr: 1e-4
+anneal_lr: false
+clip_epsilon: 0.2
+entropy_coef: 0.0
+max_grad_norm: 0.5
+normalize_adv: true
+
+#PPO Lag specifics
+cost_limit: 25
+update_epochs: 8
+batch_size: 64
+rollout_size: 512
+k_i: 0.003
+k_p: 0
+k_d: 0
+
+gae:
+  gamma: 0.99
+  lam: 0.95
+
+model_arch: "disjoint"
+hidden_sizes: [256, 256]
+activation: "tanh"
+initialization_method: "orthogonal"
+
+#early stopping
+use_kl_early_stopping: true
+early_stopping_target_kl: 0.01
+
+use_cost: true
+use_phasic: false

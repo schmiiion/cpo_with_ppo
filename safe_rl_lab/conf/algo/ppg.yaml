@@ -1,0 +1,33 @@
+name: "PPG"
+
+#algo hyperparams
+lr: 1e-4
+anneal_lr: false
+clip_epsilon: 0.2
+entropy_coef: 0.0
+max_grad_norm: 0.5
+normalize_adv: true
+
+#PPG specifics
+N_pi: 16
+E_pi: 2
+E_v: 2
+E_aux: 6
+batch_size: 64
+rollout_size: 512
+
+gae:
+  gamma: 0.99
+  lam: 0.95
+
+model_arch: "disjoint"
+hidden_sizes: [256, 256]
+activation: "tanh"
+initialization_method: "orthogonal"
+
+#early stopping
+use_kl_early_stopping: true
+early_stopping_target_kl: 0.01
+
+use_cost: false
+use_phasic: true

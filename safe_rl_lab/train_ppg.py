@@ -9,7 +9,7 @@ import numpy as np
 
 # OWN
 from safe_rl_lab.envs.wrappers import make_env
-from safe_rl_lab.algo.ppg import PPG
+from safe_rl_lab.algo.ppg_depr import PPG
 
 
 
