@@ -3,7 +3,7 @@ from safe_rl_lab.algo.policy_gradient import PolicyGradient
 
 class PPO(PolicyGradient):
 
-    def compute_loss(self, data, cfg):
+    def compute_loss(self, data):
         obs = data['obs']
         act = data['act']
         old_logp = data['logp']
@@ -24,21 +24,21 @@ class PPO(PolicyGradient):
 
         # 3. PPO Loss
         surr1 = ratio * adv
-        surr2 = torch.clamp(ratio, 1.0 - cfg.algo.clip_epsilon, 1.0 + cfg.algo.clip_epsilon) * adv
+        surr2 = torch.clamp(ratio, 1.0 - self.cfg.algo.clip_epsilon, 1.0 + self.cfg.algo.clip_epsilon) * adv
         policy_loss = -torch.min(surr1, surr2).mean()
 
         v_loss_unclipped = (new_val - ret) ** 2
         v_clipped = old_val + torch.clamp(
-            new_val - old_val, -cfg.algo.clip_epsilon, cfg.algo.clip_epsilon,
+            new_val - old_val, -self.cfg.algo.clip_epsilon, self.cfg.algo.clip_epsilon,
         )
         v_loss_clipped = (v_clipped - ret) ** 2
         v_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
 
-        total_loss = policy_loss + v_loss - cfg.algo.entropy_coef * entropy_scalar
+        total_loss = policy_loss + v_loss - self.cfg.algo.entropy_coef * entropy_scalar
 
         stats = {
             "policy_loss": policy_loss.item(),
-            "v_los" : v_loss.item(),
+            "v_loss" : v_loss.item(),
             "entropy": entropy_scalar.item(),
             "approx_kl": approx_kl,
         }

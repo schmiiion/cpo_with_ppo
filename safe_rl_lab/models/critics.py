@@ -38,6 +38,3 @@ class Critic(nn.Module):
         """
         val = self.net(obs)
         return val
-
-
-class

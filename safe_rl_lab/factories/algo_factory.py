@@ -1,5 +1,6 @@
 import torch
 from safe_rl_lab.algo.ppo import PPO
+from safe_rl_lab.algo.ppg import PPG
 from safe_rl_lab.algo.ppo_lag import PPOLag
 from safe_rl_lab.factories.agent_factory import AgentFactory
 from safe_rl_lab.utils.lagrange import PIDLagrange
@@ -52,5 +53,25 @@ class AlgoFactory:
                 cfg=cfg,
                 device=device,
             )
+        elif algo_type == "ppg":
+            main_optimizer = torch.optim.Adam(agent.model.parameters(), lr=cfg.algo.lr)
+
+            value_lr = getattr(cfg.algo, "value_lr", cfg.algo.lr)
+            value_optimizer = torch.optim.Adam(
+                agent.value_critic.parameters(),
+                lr=value_lr,
+                eps=1e-5
+            )
+
+            return PPG(
+                logger=logger,
+                runner=runner,
+                agent=agent,
+                policy_optimizer=main_optimizer,
+                value_optimizer=value_optimizer,
+                cfg=cfg,
+                device=device,
+            )
+
         else:
             raise NotImplementedError

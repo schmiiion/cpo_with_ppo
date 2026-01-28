@@ -4,47 +4,20 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7610b9ac-0a23-4625-9e70-d830e0225193" name="Changes" comment="continued with the reworking. Stopped with the models. Next is a factory for the models and then continue with the Algorithms.">
-      <change afterPath="$PROJECT_DIR$/safe_rl_lab/algo/ppg_depr.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/safe_rl_lab/conf/algo/ppo.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/safe_rl_lab/utils/logger.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/safe_rl_lab/utils/other_stuff.py" afterDir="false" />
+    <list default="true" id="7610b9ac-0a23-4625-9e70-d830e0225193" name="Changes" comment="a lot of stuff">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/agents/base.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/ppg_agent.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/ppo_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/agents/variants.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/safe_ppo_agent.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/base_algo.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/base_algo.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/cpo.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/cpo.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/cppo_pid.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/cppo_pid.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/agents/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/safe_rl_lab/agents/variants.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/agents/variants.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/policy_gradient.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/policy_gradient.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/ppg.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/ppg.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/ppo.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/ppo.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/algo/ppo_lag.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/algo/ppo_lag.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/conf/algorithm/ppg.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/conf/algo/ppg.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/conf/algorithm/ppo.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/conf/algorithm/ppo_lag.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/conf/algo/ppo_lag.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/safe_rl_lab/conf/algo/ppg.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/conf/algo/ppg.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/conf/config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/conf/config.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/config.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/envs/wrappers.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/envs/wrappers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/safe_rl_lab/factories/agent_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/factories/agent_factory.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/factories/algo_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/factories/algo_factory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/factories/model_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/factories/agent_factory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/abstractBaseClasses.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/actor_critic.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/models/actor_critic.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/actor_critic_disjoint.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/cost_critic.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/models/cost_critic.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/phasicModel.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/sharedBackboneAgent.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/train.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/train_ppg.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/train_ppg.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/safe_rl_lab/utils/lagrange.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/utils/lagrange.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/safe_rl_lab/models/critics.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/models/critics.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/utils/rollout_buffer.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/utils/rollout_buffer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/safe_rl_lab/utils/vector_runner.py" beforeDir="false" afterPath="$PROJECT_DIR$/safe_rl_lab/utils/vector_runner.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/runs/SafetyAntGoal0-v0-25000-0.001-1761677112/events.out.tfevents.1761677112.shady.15622.0" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/runs/SafetyAntGoal0-v0-25000-0.001-1761677580/events.out.tfevents.1761677580.shady.15837.0" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/runs/SafetyAntGoal0-v0-25000-0.001-1761677634/events.out.tfevents.1761677634.shady.15854.0" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/runs/SafetyAntGoal0-v0-25000-0.001-1761681514/events.out.tfevents.1761681514.shady.16526.0" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -305,7 +278,7 @@
       <workItem from="1761648116897" duration="13406000" />
       <workItem from="1762851035060" duration="273168000" />
       <workItem from="1767555311723" duration="2391000" />
-      <workItem from="1767858885872" duration="195432000" />
+      <workItem from="1767858885872" duration="229682000" />
     </task>
     <task id="LOCAL-00001" summary="added wandb logging,&#10;tanh squashing of actions and reverse">
       <option name="closed" value="true" />
@@ -387,7 +360,15 @@
       <option name="project" value="LOCAL" />
       <updated>1768406540486</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="a lot of stuff">
+      <option name="closed" value="true" />
+      <created>1769105730673</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1769105730673</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -415,7 +396,8 @@
     <MESSAGE value="started implementing ppo_lag.&#10;+Added a cost critic class.&#10;+Added the cost critic to the env runner&#10;+update GAE to encompass cost signal (wip)" />
     <MESSAGE value="finished implementing PPO Lag&#10;&#10;#started refactoring into modular approach" />
     <MESSAGE value="continued with the reworking. Stopped with the models. Next is a factory for the models and then continue with the Algorithms." />
-    <option name="LAST_COMMIT_MESSAGE" value="continued with the reworking. Stopped with the models. Next is a factory for the models and then continue with the Algorithms." />
+    <MESSAGE value="a lot of stuff" />
+    <option name="LAST_COMMIT_MESSAGE" value="a lot of stuff" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -465,13 +447,13 @@
           <line>15</line>
           <option name="timeStamp" value="168" />
         </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/safe_rl_lab/utils/rollout_buffer.py</url>
+          <line>122</line>
+          <option name="timeStamp" value="202" />
+        </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
-    <watches-manager>
-      <configuration name="PythonConfigurationType">
-        <watch expression="self._cost_sum" />
-      </configuration>
-    </watches-manager>
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/cpo_with_ppg$train_ppo__1_.coverage" NAME="train_ppo Coverage Results" MODIFIED="1762332495937" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/safe_rl_lab" />
@@ -483,6 +465,6 @@
     <SUITE FILE_PATH="coverage/cpo_with_ppg$train_ppo.coverage" NAME="train_ppo Coverage Results" MODIFIED="1761681512797" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
     <SUITE FILE_PATH="coverage/cpo_with_ppg$cpo.coverage" NAME="cpo Coverage Results" MODIFIED="1761649704282" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
     <SUITE FILE_PATH="coverage/cpo_with_ppg$train_ppg.coverage" NAME="train_ppg Coverage Results" MODIFIED="1764711851096" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/safe_rl_lab" />
-    <SUITE FILE_PATH="coverage/cpo_with_ppg$train.coverage" NAME="train Coverage Results" MODIFIED="1769089539669" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/safe_rl_lab" />
+    <SUITE FILE_PATH="coverage/cpo_with_ppg$train.coverage" NAME="train Coverage Results" MODIFIED="1769599839090" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/safe_rl_lab" />
   </component>
 </project>

@@ -10,17 +10,19 @@ normalize_adv: true
 
 #PPG specifics
 N_pi: 16
-E_pi: 2
-E_v: 2
+E_pi: 1
+E_v: 1
 E_aux: 6
-batch_size: 64
-rollout_size: 512
+number_mb_per_epoch: 8
+rollout_size: 256
+aux_mb_per_N_pi: 16
+beta_clone: 2.0
 
 gae:
   gamma: 0.99
   lam: 0.95
 
-model_arch: "disjoint"
+model_arch: "ppgactorcritic"
 hidden_sizes: [256, 256]
 activation: "tanh"
 initialization_method: "orthogonal"
@@ -30,4 +32,3 @@ use_kl_early_stopping: true
 early_stopping_target_kl: 0.01
 
 use_cost: false
-use_phasic: true

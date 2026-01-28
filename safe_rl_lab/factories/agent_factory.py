@@ -1,5 +1,5 @@
 from safe_rl_lab.agents.variants import PPOAgent, SafePPOAgent, PPGAgent
-from safe_rl_lab.models.actor_critic import SharedActorCritic, DisjointActorCritic
+from safe_rl_lab.models.actor_critic import SharedActorCritic, DisjointActorCritic, PPGActorCritic
 from safe_rl_lab.models.critics import Critic
 
 
@@ -11,6 +11,8 @@ class AgentFactory:
             model = SharedActorCritic(obs_dim, act_dim, cfg.algo.hidden_sizes, cfg.algo.activation, cfg.algo.initialization_method)
         elif cfg.algo.model_arch == "disjoint":
             model = DisjointActorCritic(obs_dim, act_dim, cfg.algo.hidden_sizes, cfg.algo.activation, cfg.algo.initialization_method)
+        elif cfg.algo.model_arch == "ppgactorcritic":
+            model = PPGActorCritic(obs_dim, act_dim, cfg.algo.hidden_sizes, cfg.algo.activation, cfg.algo.initialization_method)
         else:
             raise ValueError(f"Unknown model type {cfg.algo.model_arch}")
 
@@ -23,8 +25,10 @@ class AgentFactory:
             cost_critic.to(device)
             agent = SafePPOAgent(model, cost_critic)
         elif algo_type == "ppg":
-            assert isinstance(model, DisjointActorCritic), "PPG requires disjoint architecture!"
-            agent = PPGAgent(model)
+            assert isinstance(model, PPGActorCritic), "PPG requires a specific ActorCritic!"
+            value_critic = Critic(obs_dim, cfg.algo.hidden_sizes, cfg.algo.activation)
+            value_critic.to(device)
+            agent = PPGAgent(model, value_critic)
         else:
             raise ValueError(f"Unknown algo_type: {algo_type}")
 

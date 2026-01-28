@@ -34,12 +34,7 @@ class VectorRunner:
 
         for step in range(0, num_steps):
             global_step += self.env.num_envs
-
-            #1 Action selection
-            if buffer.use_phasic:
-                action, agent_info = agent.act(self.obs, return_dist_params=True)
-            else:
-                action, agent_info = agent.act(self.obs)
+            action, agent_info = agent.act(self.obs)
 
             #2 Environment Step
             cpu_action = action.cpu().numpy()
@@ -80,8 +75,6 @@ class VectorRunner:
                 done=current_done,
                 cost=cost_tensor,
                 cval=cval,
-                pd_mean=agent_info.get("pd_mean"),
-                pd_std=agent_info.get("pd_std"),
             )
 
             #4 Advance

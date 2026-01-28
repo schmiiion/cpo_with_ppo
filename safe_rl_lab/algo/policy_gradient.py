@@ -32,7 +32,6 @@ class PolicyGradient(BaseAlgo, ABC):
             act_shape=self.runner.act_shape,
             device=self.device,
             use_cost=self.cfg.algo.use_cost,
-            use_phasic=self.cfg.algo.use_phasic,
         )
 
         #Generic update Loop for all Policy Gradient Algorithms
@@ -82,7 +81,7 @@ class PolicyGradient(BaseAlgo, ABC):
                 mb_inds = b_inds[start:end]
                 mb = {k: v[mb_inds] for k, v in data.items()}
 
-                loss, stats = self.compute_loss(mb, self.cfg)
+                loss, stats = self.compute_loss(mb)
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -112,7 +111,7 @@ class PolicyGradient(BaseAlgo, ABC):
         return data
 
     @abstractmethod
-    def compute_loss(self, batch, config):
+    def compute_loss(self, batch):
         """
         Must be implemented by Child (PPO, PPO-Lag).
         Returns: (torch.Tensor scalar_loss, dict stats_for_logging)

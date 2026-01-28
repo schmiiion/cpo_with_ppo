@@ -1,3 +1,5 @@
+from wandb.integration.torch.wandb_torch import torch
+import torch
 from safe_rl_lab.agents.base import Agent
 
 class PPOAgent(Agent):
@@ -28,12 +30,47 @@ class PPGAgent(PPOAgent):
     """
     Requires a DisjointActorCritic to perform aux updates
     """
-    def __init__(self, model):
+    def __init__(self, model, value_critic):
         super().__init__(model)
+        self.value_critic = value_critic
 
-    def get_aux_prediction(self, obs):
+    def act(self, obs):
+        """
+        Overrides the base class's act()
+        - Calls model, i.e. Actor for the action/ logp
+        - Calls disjoint Value Critic for the value estimate
+        """
+        with torch.no_grad():
+            pd, _ = self.model(obs)
+            action = pd.sample()
+            logp = pd.log_prob(action).sum(-1)
+
+            val = self.value_critic(obs).flatten()
+
+        info = {"val": val, "logp": logp}
+        return action, info
+
+    def get_value(self, obs):
+        """Override base get_value to use the correct critic"""
+        return self.value_critic(obs)
+
+    def evaluate_actions(self, obs, actions, need_val=True):
+        pd, _ = self.model(obs)
+
+        log_probs = pd.log_prob(actions).sum(-1)
+
+        entropy = pd.entropy().sum(-1)
+
+        if need_val:
+            val = self.value_critic(obs).flatten()
+        else:
+            val = None
+
+        return log_probs, entropy, val
+
+    def get_policy_value(self, obs):
         """
         Specific to PPG: Get values from the policy's aux head vs value net.
         """
-        # ... PPG specific logic ...
-        pass
+        policy_val = self.model.forward_aux(obs)
+        return policy_val
