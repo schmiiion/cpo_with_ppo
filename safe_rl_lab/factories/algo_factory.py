@@ -1,9 +1,10 @@
 import torch
+
+from safe_rl_lab.algo.ppg_lag import PPGLag
 from safe_rl_lab.algo.ppo import PPO
 from safe_rl_lab.algo.ppg import PPG
 from safe_rl_lab.algo.ppo_lag import PPOLag
 from safe_rl_lab.factories.agent_factory import AgentFactory
-from safe_rl_lab.utils.lagrange import PIDLagrange
 from safe_rl_lab.utils.vector_runner import VectorRunner
 
 
@@ -69,6 +70,31 @@ class AlgoFactory:
                 agent=agent,
                 policy_optimizer=main_optimizer,
                 value_optimizer=value_optimizer,
+                cfg=cfg,
+                device=device,
+            )
+
+        elif algo_type == "ppg_lag":
+            main_optimizer = torch.optim.Adam(agent.model.parameters(), lr=cfg.algo.lr)
+
+            value_lr = getattr(cfg.algo, "value_lr", cfg.algo.lr)
+            value_optimizer = torch.optim.Adam(
+                agent.value_critic.parameters(),
+                lr=value_lr,
+                eps=1e-5
+            )
+            cost_optimizer = torch.optim.Adam(
+                agent.cost_critic.parameters(),
+                lr=value_lr,
+                eps=1e-5
+            )
+            return PPGLag(
+                logger=logger,
+                runner=runner,
+                agent=agent,
+                policy_optimizer=main_optimizer,
+                value_optimizer=value_optimizer,
+                cost_optimizer=cost_optimizer,
                 cfg=cfg,
                 device=device,
             )

@@ -22,7 +22,7 @@ gae:
   gamma: 0.99
   lam: 0.95
 
-model_arch: "ppgactorcritic"
+# model architecture is fixed to PPGActorCritic
 hidden_sizes: [256, 256]
 activation: "tanh"
 initialization_method: "orthogonal"

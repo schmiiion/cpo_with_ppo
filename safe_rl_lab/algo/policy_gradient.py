@@ -46,9 +46,7 @@ class PolicyGradient(BaseAlgo, ABC):
             # 1. Sample Buffer and return bootstrap values
             global_step, rollout_info, last_val, last_done, last_cval = self.runner.run(self.agent, self.buffer, self.global_step)
             self.global_step = global_step
-            # log stats and safe a new best modelx
             self._process_episodic_stats(rollout_info)
-            # self._safe_if_best(global_step)
 
             #  2. Compute GAE (inside Buffer)
             self.buffer.compute_gae(last_val, last_done, self.cfg.algo.gae.gamma, self.cfg.algo.gae.lam, last_cval)

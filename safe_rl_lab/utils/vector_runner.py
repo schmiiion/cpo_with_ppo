@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import wandb
 
 class VectorRunner:
 
@@ -62,8 +61,9 @@ class VectorRunner:
                 for vec_env in info["final_info"]:
                     acc_cost += vec_env["acc_cost"]
                     acc_rew += vec_env["episode"]["r"]
-                rollout_info["rew"] = (acc_rew / self.cfg.env.num_envs)
-                rollout_info["cost"] = (acc_cost /self.cfg.env.num_envs)
+                num_finished = len(info["final_info"])
+                rollout_info["rew"] = (acc_rew / num_finished)
+                rollout_info["cost"] = (acc_cost / num_finished)
 
             # 3 Store data
             buffer.store(

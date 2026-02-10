@@ -100,7 +100,9 @@ class RolloutBuffer:
         """Store flattened V_targ and Obs in phasic buffer"""
         s_t = self.obs.flatten(0, 1)
         V_target = self.ret.flatten(0, 1)
-        phasic_buffer.store(s_t, V_target)
+        C_target = self.cret.flatten(0, 1) if self.use_cost else None
+
+        phasic_buffer.store(s_t, V_target, C_target)
 
 
 class PhasicBuffer:
@@ -118,16 +120,22 @@ class PhasicBuffer:
         self.old_means = torch.zeros((cfg.algo.N_pi, self.phase_size) + act_shape, device=device)
         self.old_stds = torch.zeros((cfg.algo.N_pi, self.phase_size) + act_shape, device=device)
 
+        if cfg.algo.use_cost:
+            self.c_targ = torch.zeros((cfg.algo.N_pi, self.phase_size), device=device)
+
         self.ptr = 0
 
-    def store(self, s_t, V_targ):
+    def store(self, s_t, V_targ, C_targ):
         """Stores data from one Policy Phase iteration."""
-        if self.ptr >= self.max_size:
+        if self.ptr >= self.cfg.algo.N_pi:
             raise IndexError("Phasic buffer overflow!")
 
         self.obs[self.ptr] = s_t
         self.v_targ[self.ptr] = V_targ
+        if C_targ is not None:
+            self.c_targ[self.ptr] = C_targ
         self.ptr += 1
+
 
     def compute_densities_for_all_states(self, agent, batch_size=4096):
         """
@@ -151,6 +159,7 @@ class PhasicBuffer:
                 self.old_means.flatten(0,1)[start:end] = dist.mean
                 self.old_stds.flatten(0,1)[start:end] = dist.stddev
 
+
     def get(self):
         """Returns flattened data for the Auxiliary Phase update loop."""
         data = {
@@ -159,5 +168,7 @@ class PhasicBuffer:
             "old_mean": self.old_means.flatten(0,1),
             "old_std": self.old_stds.flatten(0,1),
         }
+        if self.cfg.algo.use_cost:
+            data["c_targ"] = self.c_targ.flatten(0,1)
         self.ptr = 0
         return data

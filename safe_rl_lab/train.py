@@ -1,6 +1,7 @@
 import hydra
 import gymnasium
 from omegaconf import DictConfig
+import sys
 
 from safe_rl_lab.envs.wrappers import make_env
 from safe_rl_lab.factories.algo_factory import AlgoFactory
@@ -11,14 +12,24 @@ from safe_rl_lab.utils.logger import Logger
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig):
-    logger = Logger(cfg)
+    is_debugging = sys.gettrace() is not None
+
+    logger = Logger(cfg, is_debugging=is_debugging)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # 1. Setup Env
-    env  = gymnasium.vector.AsyncVectorEnv(
-        [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, logger.run_name, 0.99)
-         for i in range(cfg.env.num_envs)], shared_memory=False
+    if logger.is_active:
+        run_name = logger.run_name
+    else:
+        run_name = "placeholder"
+    # env  = gymnasium.vector.AsyncVectorEnv(
+    #     [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, run_name, 0.99)
+    #      for i in range(cfg.env.num_envs)], shared_memory=True
+    # )
+    env = gymnasium.vector.SyncVectorEnv(
+        [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, run_name, 0.99)
+         for i in range(cfg.env.num_envs)]
     )
 
     # 2. Setup Algorithm (including Agent)

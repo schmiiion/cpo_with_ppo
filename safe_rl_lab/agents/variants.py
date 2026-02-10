@@ -74,3 +74,18 @@ class PPGAgent(PPOAgent):
         """
         policy_val = self.model.forward_aux(obs)
         return policy_val
+
+class PPGLagAgent(PPGAgent):
+    """
+    Requires a DisjointActorCritic to perform aux updates
+    """
+    def __init__(self, model, value_critic, cost_critic):
+        super().__init__(model, value_critic)
+        self.cost_critic = cost_critic
+
+    def get_cost_value(self, obs):
+        return self.cost_critic(obs).flatten()
+
+    def get_policy_cost(self, obs):
+        policy_cost = self.model.forward_aux_cost(obs)
+        return policy_cost

@@ -87,3 +87,34 @@ class PPGActorCritic(ActorCriticBase):
         h = self.encoder(obs)
         val = self.aux_head(h)
         return val
+
+class SafePPGActorCritic(ActorCriticBase):
+    """Disjoint Actor and Critic. The Actor has a policy and a value head."""
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, weight_initialization_mode):
+        super().__init__()
+        self.encoder = build_mlp_network(sizes=[obs_dim] + hidden_sizes, activation=activation,
+                                           weight_initialization_mode=weight_initialization_mode)
+        self.actor_head = build_mlp_network(sizes=[hidden_sizes[-1]] + [act_dim], activation=activation,
+                                            weight_initialization_mode=weight_initialization_mode)
+        self.aux_value_head = build_mlp_network(sizes=[hidden_sizes[-1], 1], activation=activation,)
+        self.aux_cost_head = build_mlp_network(sizes=[hidden_sizes[-1], 1], activation=activation,)
+        self.log_std = nn.Parameter(torch.ones(act_dim) * -0.5)
+
+    def forward(self, obs):
+        h = self.encoder(obs)
+        mu = self.actor_head(h)
+        std = torch.exp(self.log_std)
+        dist = Normal(mu, std)
+
+        return dist, None
+
+    def forward_aux(self, obs):
+        h = self.encoder(obs)
+        val = self.aux_value_head(h)
+        return val
+
+    def forward_aux_cost(self, obs):
+        h = self.encoder(obs)
+        cost = self.aux_cost_head(h)
+        return cost

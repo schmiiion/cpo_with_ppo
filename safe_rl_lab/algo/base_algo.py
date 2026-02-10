@@ -1,18 +1,18 @@
 from abc import ABC, abstractmethod
 import time
 from collections import deque, defaultdict
-import wandb
 import numpy as np
+from safe_rl_lab.utils.logger import Logger
 
 class BaseAlgo(ABC):
     def __init__(self, runner, logger, cfg, device):
         self.runner = runner
-        self.logger = logger
+        self.logger: Logger = logger
         self.cfg = cfg
         self.device = device
         self.global_step = 0
 
-        self.rollout_rolling_stats = defaultdict(lambda: deque(maxlen=50))
+        self.rollout_rolling_stats = defaultdict(lambda: deque(maxlen=100))
 
         self.last_log_time = 0
         self.sps_window = deque(maxlen=5)

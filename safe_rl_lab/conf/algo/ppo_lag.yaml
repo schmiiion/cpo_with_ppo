@@ -13,9 +13,16 @@ cost_limit: 25
 update_epochs: 8
 batch_size: 64
 rollout_size: 512
-k_i: 0.003
-k_p: 0
-k_d: 0
+k_i: 0.001
+k_p: 1.0
+k_d: 0.0
+d_delay: 15
+pid_delta_p_ema_alpha: 0.95
+pid_delta_d_ema_alpha: 0.90
+sum_norm: true, #if adv_total are scaled, the lambda should not be capped
+diff_norm: false,
+penalty_max: 100.0
+lagrangian_multiplier_init: 0.0
 
 gae:
   gamma: 0.99
@@ -31,4 +38,3 @@ use_kl_early_stopping: true
 early_stopping_target_kl: 0.01
 
 use_cost: true
-use_phasic: false

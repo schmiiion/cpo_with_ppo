@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - algo: ppg
+  - algo: ppg_lag
   - env: safety_point
 
 # Global Runner Settings

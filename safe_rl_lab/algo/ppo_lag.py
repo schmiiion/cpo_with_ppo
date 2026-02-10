@@ -9,27 +9,35 @@ class PPOLag(PPO):
     def __init__(self, logger, runner, agent, main_optimizer, cost_optimizer, cfg, device="cpu"):
         super().__init__(logger, runner, agent, main_optimizer, cfg, device)
         self.cost_optimizer = cost_optimizer
-        self.lagrange = PIDLagrange(cost_limit=cfg.algo.cost_limit, kp=cfg.algo.k_p, ki=cfg.algo.k_i, kd=cfg.algo.k_d)
+        self.lagrange = PIDLagrange(
+            pid_kp=cfg.algo.k_p,
+            pid_ki=cfg.algo.k_i,
+            pid_kd=cfg.algo.k_d,
+            pid_d_delay=cfg.algo.d_delay,
+            pid_delta_d_ema_alpha=cfg.algo.pid_delta_d_ema_alpha,
+            pid_delta_p_ema_alpha=cfg.algo.pid_delta_p_ema_alpha,
+            sum_norm=cfg.algo.sum_norm,
+            diff_norm=cfg.algo.diff_norm,
+            penalty_max=cfg.algo.penalty_max,
+            lagrangian_multiplier_init=cfg.algo.lagrangian_multiplier_init,
+            cost_limit=cfg.algo.cost_limit)
 
     def update(self, data, rollout_info):
         # --- SECTION 1: Lagrangian Update ---
         if "cost" in rollout_info:
             Jc = rollout_info["cost"]
-            self.logger.log({
-                "Jc/real_jc": Jc,
-            }, self.global_step)
+            self.logger.log({"Jc/real_jc": Jc,}, self.global_step)
         else:
             Jc = data["cost"].mean() * self.cfg.env.max_episode_steps
-            self.logger.log({
-                "Jc/est_jc": Jc,
-            }, self.global_step)
+            self.logger.log({"Jc/est_jc": Jc}, self.global_step)
 
-        cur_lambda = self.lagrange.update(Jc)
+        self.lagrange.update(Jc)
+        cur_lambda = self.lagrange.lagrangian_multiplier
 
         self.logger.log({
             "cost/lambda": cur_lambda,
             "cost/Jc": Jc,
-            "cost/cost_violation": Jc - self.lagrange.cost_limit
+            "cost/cost_violation": Jc - self.cfg.algo.cost_limit
         }, step=self.global_step)
 
         c_adv = data['c_adv']
@@ -59,7 +67,7 @@ class PPOLag(PPO):
                 mb = {k: v[mb_inds] for k, v in data.items()}
 
                 #1. Compute all losses
-                ppo_loss, cost_loss, stats = self.compute_loss(mb, self.cfg)
+                ppo_loss, cost_loss, stats = self.compute_loss(mb)
 
                 #2. update main agent
                 self.optimizer.zero_grad()
@@ -92,8 +100,8 @@ class PPOLag(PPO):
         return avg_stats
 
 
-    def compute_loss(self, data, cfg):
-        ppo_loss, stats = super().compute_loss(data, cfg)
+    def compute_loss(self, data):
+        ppo_loss, stats = super().compute_loss(data)
 
         obs = data['obs']
         c_ret = data['c_ret']
