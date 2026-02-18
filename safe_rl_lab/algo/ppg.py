@@ -2,7 +2,6 @@ from collections import defaultdict
 
 import numpy as np
 
-from safe_rl_lab.agents.variants import PPGAgent
 from safe_rl_lab.algo.policy_gradient import PolicyGradient
 from safe_rl_lab.utils.rollout_buffer import RolloutBuffer, PhasicBuffer
 import torch

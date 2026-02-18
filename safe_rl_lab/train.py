@@ -23,14 +23,14 @@ def main(cfg: DictConfig):
         run_name = logger.run_name
     else:
         run_name = "placeholder"
-    # env  = gymnasium.vector.AsyncVectorEnv(
-    #     [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, run_name, 0.99)
-    #      for i in range(cfg.env.num_envs)], shared_memory=True
-    # )
-    env = gymnasium.vector.SyncVectorEnv(
+    env  = gymnasium.vector.AsyncVectorEnv(
         [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, run_name, 0.99)
-         for i in range(cfg.env.num_envs)]
+         for i in range(cfg.env.num_envs)], shared_memory=True
     )
+    # env = gymnasium.vector.SyncVectorEnv(
+    #     [make_env(cfg.env.gym_id, cfg.seed + i, i, cfg.env.capture_video, run_name, 0.99)
+    #      for i in range(cfg.env.num_envs)]
+    # )
 
     # 2. Setup Algorithm (including Agent)
     algo = AlgoFactory.create(cfg, env, logger, device)

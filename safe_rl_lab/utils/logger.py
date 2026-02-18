@@ -20,7 +20,7 @@ class Logger:
         if cfg.algo.name == "PPG" or cfg.algo.name == "PPG_Lag": #they cant choose an architecture
             self.run_name = f"{cfg.algo.name}-{cfg.env.gym_id}-{int(time.time())}"
         else:
-            self.run_name = f"{cfg.algo.name}-{cfg.env.gym_id}-{cfg.algo.model_arch}-{int(time.time())}"
+            self.run_name = f"{cfg.algo.name}-{cfg.env.gym_id}-{cfg.algo.a2c_architecture}-{int(time.time())}"
 
         self.run = wandb.init(
             entity=cfg.wandb.entity,

@@ -36,5 +36,5 @@ class Critic(nn.Module):
         Returns:
             The V critic value of observation.
         """
-        val = self.net(obs)
+        val = self.net(obs).flatten()
         return val

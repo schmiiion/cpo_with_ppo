@@ -1,6 +1,5 @@
 from collections import defaultdict
 import numpy as np
-from safe_rl_lab.agents.variants import PPGAgent
 from safe_rl_lab.algo.policy_gradient import PolicyGradient
 from safe_rl_lab.utils.lagrange import PIDLagrange
 from safe_rl_lab.utils.rollout_buffer import RolloutBuffer, PhasicBuffer
@@ -89,10 +88,10 @@ class PPGLag(PolicyGradient):
         #  2. Compute GAE (inside Buffer)
         self.buffer.compute_gae(last_val, last_done, self.cfg.algo.gae.gamma, self.cfg.algo.gae.lam, last_cval)
 
-
         data = self.buffer.get()
-        # Update Lambdas
-        self.update_lambda_and_augment_adv(rollout_info, data)
+        # Update Lambdas and compute adv_total
+        adv_total = self.update_lambda_and_augment_adv(rollout_info, data)
+        data["adv"] = adv_total
 
         # 3. Policy update loop
         for policy_epoch in range(1, self.cfg.algo.E_pi + 1):
@@ -101,7 +100,7 @@ class PPGLag(PolicyGradient):
 
         # 4. Value update loop
         for value_epoch in range(1, self.cfg.algo.E_v + 1):
-            stats = self.update_value_function(data)
+            stats = self.update_value_functions(data)
             self.logger.log(metrics=stats, step=self.global_step, prefix="policy_phase")
 
         # 5. Populate PPG Buffer
@@ -117,41 +116,69 @@ class PPGLag(PolicyGradient):
         dataset_size = data["obs"].shape[0]
         aux_batch_size = dataset_size // (self.cfg.algo.N_pi * self.cfg.algo.aux_mb_per_N_pi)
 
+        phase_stats = defaultdict(list)
+        aux_opt_step = 0
+
         for aux_epoch in range(1, self.cfg.algo.E_aux + 1):
-            mb_inds = torch.randperm(dataset_size)
+            inds = torch.randperm(dataset_size)
 
             for start in range(0, dataset_size, aux_batch_size):
+                # MB SETUP
                 end = start + aux_batch_size
-                mb_inds = mb_inds[start:end]
+                mb_inds = inds[start:end]
 
+                # RETRIEVE DATA
                 mb_obs = data["obs"][mb_inds]
                 mb_vtarg = data["v_targ"][mb_inds]
                 mb_ctarg = data["c_targ"][mb_inds]
                 mb_old_mean = data["old_mean"][mb_inds]
                 mb_old_std = data["old_std"][mb_inds]
 
-                #Distill features through policy head in Policy Network
+                # OPTIMIZATION STEPS
                 dist_old = torch.distributions.Normal(mb_old_mean, mb_old_std)
 
+                # Update Policy and distill features
                 self.optimizer.zero_grad()
-                L_joint = self.compute_L_joint(mb_obs, mb_vtarg, mb_ctarg, dist_old)
+                L_joint, joint_metrics = self.compute_L_joint(mb_obs, mb_vtarg, mb_ctarg, dist_old)
                 L_joint.backward()
                 self.optimizer.step()
-                self.logger.log(metrics={"L_joint":L_joint.item()}, step=self.global_step, prefix="auxiliary_phase" )
 
                 #Update Value Network
                 self.value_optimizer.zero_grad()
                 L_value = self.compute_L_value_unclipped(mb_obs, mb_vtarg)
                 L_value.backward()
                 self.value_optimizer.step()
-                self.logger.log(metrics={"L_value": L_value.item()}, step=self.global_step, prefix="auxiliary_phase")
+                self.logger.log(metrics={"L_value": L_value.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
 
                 #Update Cost Network
                 self.cost_optimizer.zero_grad()
                 L_cost = self.compute_L_value_unclipped(mb_obs, mb_ctarg)
                 L_cost.backward()
                 self.cost_optimizer.step()
-                self.logger.log(metrics={"L_value": L_cost.item()}, step=self.global_step, prefix="auxiliary_phase")
+                self.logger.log(metrics={"L_cost": L_cost.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
+
+                #collect metrics over batches
+                phase_stats["L_value"].append(L_value.item())
+                phase_stats["L_cost"].append(L_cost.item())
+                phase_stats["L_joint"].append(L_joint.item())
+
+                #debug into aux phase:
+                self.logger.log(
+                    metrics={
+                        "debug_aux/ActorValueHeadL": joint_metrics["L_aux_value"],
+                        "debug_aux/ActorCostHeadL": joint_metrics["L_aux_cost"],
+                        "debug_aux/KL_Divergence": joint_metrics["KL_Div"],
+                        "debug_aux/L_value": L_value.item(),
+                        "debug_aux/L_cost": L_cost.item(),
+                        "debug_aux/L_joint": L_joint.item(),
+                        "debug_aux/aux_step": aux_opt_step
+                    },
+                step=None)
+                aux_opt_step += 1
+
+        # --- END OF PHASE: Log Averages to Main Dashboard ---
+        avg_stats = {k: np.mean(v) for k, v in phase_stats.items()}
+        self.logger.log(metrics=avg_stats, step=self.global_step, prefix="auxiliary_phase")
 
 
 ######################### POLICY RELATED ##################################################
@@ -225,24 +252,28 @@ class PPGLag(PolicyGradient):
 
 
     def compute_L_joint(self, obs, v_targ, c_targ, dist_old):
+        joint_metrics = {}
         #1. Compute L_aux
         policy_val = self.agent.get_policy_value(obs).flatten()
         L_aux_value = 0.5 * ((policy_val - v_targ)**2).mean()
+        joint_metrics["L_aux_value"] = L_aux_value.item()
 
         policy_cost = self.agent.get_policy_cost(obs).flatten()
         L_aux_cost = 0.5 * ((policy_cost - c_targ) ** 2).mean()
+        joint_metrics["L_aux_cost"] = L_aux_cost.item()
 
         dist_new, _  = self.agent.model(obs)
         kl_divergence = torch.distributions.kl_divergence(dist_old, dist_new).mean()
+        joint_metrics["KL_Div"] = kl_divergence.item()
 
         L_joint = L_aux_value + L_aux_cost + self.cfg.algo.beta_clone * kl_divergence
 
-        return L_joint
+        return L_joint, joint_metrics
 
 
 ######################### VALUE RELATED ##################################################
 
-    def update_value_function(self, data):
+    def update_value_functions(self, data):
         dataset_size = data["obs"].shape[0]
         batch_size = dataset_size // self.cfg.algo.number_mb_per_epoch
         b_inds = np.arange(dataset_size)
@@ -339,8 +370,8 @@ class PPGLag(PolicyGradient):
 
     def update_lambda_and_augment_adv(self, rollout_info, data):
         # --- SECTION 1: Lagrangian Update ---
-        if "cost" in rollout_info:
-            Jc = rollout_info["cost"]
+        if "scaled_cost" in rollout_info:
+            Jc = rollout_info["scaled_cost"]
         else:
             Jc = data["cost"].mean() * self.cfg.env.max_episode_steps
 
@@ -358,10 +389,10 @@ class PPGLag(PolicyGradient):
 
         if self.cfg.algo.normalize_adv:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            c_adv = (c_adv - c_adv.mean()) / (c_adv.std() + 1e-8)
+            c_adv = (c_adv - c_adv.mean())
 
         adv_total = (adv - cur_lambda * c_adv) / (1 + cur_lambda)
-        data['adv'] = adv_total
+        return adv_total
 
 ###### TO MAKE ABC HAPPY:
 

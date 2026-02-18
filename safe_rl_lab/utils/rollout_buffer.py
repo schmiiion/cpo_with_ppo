@@ -2,9 +2,11 @@ import torch
 from typing import Tuple
 
 class RolloutBuffer:
-    def __init__(self, num_steps, num_envs, obs_shape: Tuple, act_shape:Tuple, device="cpu", use_cost=False):
+    def __init__(self, num_steps, num_envs, obs_shape: Tuple, act_shape:Tuple, standardized_adv_r, standardized_adv_c, device="cpu", use_cost=False):
         self.num_steps = num_steps
         self.num_envs = num_envs
+        self.standardized_adv_r: bool = standardized_adv_r
+        self.standardized_adv_c: bool = standardized_adv_c
         self.device = device
         self.ptr = 0
         self.full = False
@@ -21,11 +23,10 @@ class RolloutBuffer:
 
         #for constrained RL:
         self.use_cost = use_cost
-        if use_cost:
-            self.cost = torch.zeros((num_steps, num_envs), device=device)
-            self.cval = torch.zeros((num_steps, num_envs), device=device)
-            self.cadv = torch.zeros((num_steps, num_envs), device=device)
-            self.cret = torch.zeros((num_steps, num_envs), device=device)
+        self.cost = torch.zeros((num_steps, num_envs), device=device)
+        self.cval = torch.zeros((num_steps, num_envs), device=device)
+        self.cadv = torch.zeros((num_steps, num_envs), device=device)
+        self.cret = torch.zeros((num_steps, num_envs), device=device)
 
     def store(self, obs, act, rew, val, logp, done, cost=None, cval=None, pd_mean=None, pd_std=None):
         """Save one step of samples from the env"""
@@ -81,18 +82,24 @@ class RolloutBuffer:
         data = {
             "obs": self.obs.flatten(0, 1),
             "act": self.act.flatten(0, 1),
-            "ret": self.ret.flatten(0, 1),
-            "adv": self.adv.flatten(0, 1),
+            "target_value_r": self.ret.flatten(0, 1),
             "logp": self.logp.flatten(0, 1),
-            "val": self.val.flatten(0, 1),
+            "r_pred": self.val.flatten(0, 1),
         }
+        adv = self.adv.flatten(0, 1)
+        if self.standardized_adv_r:
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        data["adv_r"] = adv
+
+        data["cost"] = self.cost.flatten(0, 1)
+        data["target_value_c"] = self.cret.flatten(0, 1)
+        data["c_pred"] = self.cval.flatten(0, 1)
+        adv_c = self.cadv.flatten(0, 1)
 
         if self.use_cost:
-            data["cost"] = self.cost.flatten(0, 1)
-            data["c_ret"] = self.cret.flatten(0, 1)
-            data["c_adv"] = self.cadv.flatten(0, 1)
-            data["c_val"] = self.cval.flatten(0, 1)
-
+            if self.standardized_adv_c:
+                adv_c = adv_c - adv_c.mean()
+        data["adv_c"] = adv_c
         return data
 
 

@@ -33,23 +33,18 @@ class VectorRunner:
 
         for step in range(0, num_steps):
             global_step += self.env.num_envs
-            action, agent_info = agent.act(self.obs)
+            action, agent_info = agent.step(self.obs)
 
             #2 Environment Step
             cpu_action = action.cpu().numpy()
             next_obs, reward, terminated, truncated, info = self.env.step(cpu_action)
-
-            if "cost_sum" in info:
-                x = info["cost"]
-                y = info["cost_sum"]
-                assert np.array_equal(x, y)
 
             done_bool = np.logical_or(terminated, truncated)
             current_done = torch.as_tensor(done_bool, dtype=torch.float32, device=self.device)
 
             cval, cost_tensor = None, None
             if buffer.use_cost:
-                costs = info["cost"]
+                costs = info["cost"] * self.cfg.algo.cost_scaling
                 cost_tensor = torch.as_tensor(costs, device=self.device)
                 cval = agent.get_cost_value(self.obs)
 
@@ -63,7 +58,9 @@ class VectorRunner:
                     acc_rew += vec_env["episode"]["r"]
                 num_finished = len(info["final_info"])
                 rollout_info["rew"] = (acc_rew / num_finished)
-                rollout_info["cost"] = (acc_cost / num_finished)
+                raw_cost = (acc_cost / num_finished)
+                rollout_info["raw_cost"] = raw_cost
+                rollout_info["scaled_cost"] = raw_cost * self.cfg.algo.cost_scaling
 
             # 3 Store data
             buffer.store(

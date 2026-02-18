@@ -47,6 +47,7 @@ class PIDLagrange:
         cost_limit: float,
     ) -> None:
         """Initialize an instance of :class:`PIDLagrangian`."""
+        print("create PID Lagrange")
         self._pid_kp: float = pid_kp
         self._pid_ki: float = pid_ki
         self._pid_kd: float = pid_kd
@@ -62,6 +63,7 @@ class PIDLagrange:
         self._delta_p: float = 0.0
         self._cost_d: float = 0.0
         self._cost_limit: float = cost_limit
+        print(f"cost_limit: {self._cost_limit}")
         self._cost_penalty: float = 0.0
 
     @property

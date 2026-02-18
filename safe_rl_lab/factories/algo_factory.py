@@ -20,84 +20,32 @@ class AlgoFactory:
         runner = VectorRunner(env, device, cfg)
 
         #Algorithm + Agent
-        algo_type = cfg.algo.name.lower()
+        algo_type: str = cfg.algo.name.lower()
 
-        agent = AgentFactory.create(algo_type, obs_dim, act_dim, cfg, device)
+        constraintA2C = AgentFactory.create(algo_type, obs_dim, act_dim, cfg, device)
 
         if algo_type == "ppo":
-            optimizer = torch.optim.Adam(agent.parameters(), lr=cfg.algo.lr, betas=(0.9, 0.999), eps=1e-5)
-
             return PPO(
                 logger=logger,
                 runner=runner,
-                agent=agent,
-                optimizer=optimizer,
+                a2c=constraintA2C,
                 cfg=cfg,
                 device=device,
             )
         elif algo_type == "ppo_lag":
-            main_optimizer = torch.optim.Adam(agent.model.parameters(), lr=cfg.algo.lr)
-
-            cost_lr = getattr(cfg.algo, "cost_lr", cfg.algo.lr)
-            cost_optimizer = torch.optim.Adam(
-                agent.cost_critic.parameters(),
-                lr=cost_lr,
-                eps=1e-5
-            )
 
             return PPOLag(
                 logger=logger,
                 runner=runner,
-                agent=agent,
-                main_optimizer=main_optimizer,
-                cost_optimizer=cost_optimizer,
+                agent=constraintA2C,
                 cfg=cfg,
                 device=device,
             )
         elif algo_type == "ppg":
-            main_optimizer = torch.optim.Adam(agent.model.parameters(), lr=cfg.algo.lr)
-
-            value_lr = getattr(cfg.algo, "value_lr", cfg.algo.lr)
-            value_optimizer = torch.optim.Adam(
-                agent.value_critic.parameters(),
-                lr=value_lr,
-                eps=1e-5
-            )
-
-            return PPG(
-                logger=logger,
-                runner=runner,
-                agent=agent,
-                policy_optimizer=main_optimizer,
-                value_optimizer=value_optimizer,
-                cfg=cfg,
-                device=device,
-            )
+            pass
 
         elif algo_type == "ppg_lag":
-            main_optimizer = torch.optim.Adam(agent.model.parameters(), lr=cfg.algo.lr)
-
-            value_lr = getattr(cfg.algo, "value_lr", cfg.algo.lr)
-            value_optimizer = torch.optim.Adam(
-                agent.value_critic.parameters(),
-                lr=value_lr,
-                eps=1e-5
-            )
-            cost_optimizer = torch.optim.Adam(
-                agent.cost_critic.parameters(),
-                lr=value_lr,
-                eps=1e-5
-            )
-            return PPGLag(
-                logger=logger,
-                runner=runner,
-                agent=agent,
-                policy_optimizer=main_optimizer,
-                value_optimizer=value_optimizer,
-                cost_optimizer=cost_optimizer,
-                cfg=cfg,
-                device=device,
-            )
+            pass
 
         else:
             raise NotImplementedError

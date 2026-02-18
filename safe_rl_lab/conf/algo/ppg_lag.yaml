@@ -1,34 +1,35 @@
 name: "PPG_Lag"
 
 #algo hyperparams
-lr: 1e-4
+lr: 3e-4
 anneal_lr: false
 clip_epsilon: 0.2
 entropy_coef: 0.0
 max_grad_norm: 0.5
-normalize_adv: true
+normalize_adv_r: true
+normalize_adv_c: true
 
 #PPG specifics
-N_pi: 16
+N_pi: 8
 E_pi: 1
 E_v: 1
-E_aux: 2
+E_aux: 6
 number_mb_per_epoch: 8
-rollout_size: 256
+rollout_size: 512
 aux_mb_per_N_pi: 16
-beta_clone: 2.0
+beta_clone: 1.0
 
 #PPO Lag specifics
-cost_limit: 40
+cost_limit: 2.5
 k_i: 0.001
 k_p: 1.0
 k_d: 0.0
 d_delay: 15
 pid_delta_p_ema_alpha: 0.95
 pid_delta_d_ema_alpha: 0.90
-sum_norm: true, #if adv_total are scaled, the lambda should not be capped
-diff_norm: false,
-penalty_max: 100.0
+sum_norm: true #if adv_total are scaled, the lambda should not be capped
+diff_norm: false
+penalty_max: 10.0
 lagrangian_multiplier_init: 0.0
 
 gae:
@@ -36,7 +37,7 @@ gae:
   lam: 0.95
 
 # model architecture is fixed to SafePPGActorCritic
-hidden_sizes: [ 256, 256 ]
+hidden_sizes: [512, 512]
 activation: "tanh"
 initialization_method: "orthogonal"
 
@@ -45,3 +46,4 @@ use_kl_early_stopping: true
 early_stopping_target_kl: 0.01
 
 use_cost: true
+cost_scaling: 0.1

@@ -50,6 +50,8 @@ class BaseAlgo(ABC):
 
         #push new data in rolling buffer
         for k, v in rollout_stats.items():
+            if k == "scaled_cost":
+                continue
             self.rollout_rolling_stats[k].append(v)
 
         #create return dict

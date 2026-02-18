@@ -1,14 +1,12 @@
 import torch
-import torch.nn.functional as F
-from collections import defaultdict, deque
-import numpy as np
 from .ppo import PPO
 from safe_rl_lab.utils.lagrange import PIDLagrange
+import torch.nn as nn
+from torch.nn.utils.clip_grad import clip_grad_norm_
 
 class PPOLag(PPO):
-    def __init__(self, logger, runner, agent, main_optimizer, cost_optimizer, cfg, device="cpu"):
-        super().__init__(logger, runner, agent, main_optimizer, cfg, device)
-        self.cost_optimizer = cost_optimizer
+    def __init__(self, logger, runner, agent, cfg, device="cpu"):
+        super().__init__(logger, runner, agent, cfg, device)
         self.lagrange = PIDLagrange(
             pid_kp=cfg.algo.k_p,
             pid_ki=cfg.algo.k_i,
@@ -22,93 +20,74 @@ class PPOLag(PPO):
             lagrangian_multiplier_init=cfg.algo.lagrangian_multiplier_init,
             cost_limit=cfg.algo.cost_limit)
 
-    def update(self, data, rollout_info):
+
+    def _update(self, rollout_info):
+        data = self.buffer.get()
+
         # --- SECTION 1: Lagrangian Update ---
-        if "cost" in rollout_info:
-            Jc = rollout_info["cost"]
-            self.logger.log({"Jc/real_jc": Jc,}, self.global_step)
+        if "scaled_cost" in rollout_info:
+            Jc = rollout_info["scaled_cost"]
         else:
             Jc = data["cost"].mean() * self.cfg.env.max_episode_steps
-            self.logger.log({"Jc/est_jc": Jc}, self.global_step)
 
         self.lagrange.update(Jc)
-        cur_lambda = self.lagrange.lagrangian_multiplier
 
         self.logger.log({
-            "cost/lambda": cur_lambda,
+            "cost/lambda": self.lagrange.lagrangian_multiplier,
             "cost/Jc": Jc,
             "cost/cost_violation": Jc - self.cfg.algo.cost_limit
         }, step=self.global_step)
 
-        c_adv = data['c_adv']
-        adv = data["adv"]
-
-        if self.cfg.algo.normalize_adv:
-            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            c_adv = (c_adv - c_adv.mean()) / (c_adv.std() + 1e-8)
-
-        adv_total = (adv - cur_lambda * c_adv) / (1 + cur_lambda)
-        data['adv'] = adv_total
-
-        # --- SECTION 2: Optimization Loop ---
-        batch_size = self.cfg.algo.batch_size
-        dataset_size = data["obs"].shape[0]
-        b_inds = np.arange(dataset_size)
-        update_stats = defaultdict(list)
+        update_state = super()._update(rollout_info)
+        return update_state
 
 
-        for epoch in range(self.cfg.algo.update_epochs):
-            epoch_kls = []
-            np.random.shuffle(b_inds)
+    def _compute_adv_surrogate(self, adv_r: torch.Tensor, adv_c: torch.Tensor) -> torch.Tensor:
+        """Compute surrogate loss.
 
-            for start in range(0, dataset_size, batch_size):
-                end = start + batch_size
-                mb_inds = b_inds[start:end]
-                mb = {k: v[mb_inds] for k, v in data.items()}
+        Policy Gradient only use reward advantage.
 
-                #1. Compute all losses
-                ppo_loss, cost_loss, stats = self.compute_loss(mb)
+        Args:
+            adv_r (torch.Tensor): The ``reward_advantage`` sampled from buffer.
+            adv_c (torch.Tensor): The ``cost_advantage`` sampled from buffer.
 
-                #2. update main agent
-                self.optimizer.zero_grad()
-                ppo_loss.backward()
-                if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm> 0:
-                    torch.nn.utils.clip_grad_norm_(self.agent.model.parameters(), self.cfg.algo.max_grad_norm)
-                self.optimizer.step()
+        Returns:
+            The advantage function of reward to update policy network.
+        """
+        penalty = self.lagrange.lagrangian_multiplier
+        return (adv_r - penalty * adv_c) / (1 + penalty)
 
-                #3. update cost critic
-                self.cost_optimizer.zero_grad()
-                cost_loss.backward()
-                if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm> 0:
-                    torch.nn.utils.clip_grad_norm_(self.agent.cost_critic.parameters(), self.cfg.algo.max_grad_norm)
-                self.cost_optimizer.step()
+    def _joint_update(self, obs, act, logp, target_value_r, target_value_c, adv_r, adv_c):
+        adv = self._compute_adv_surrogate(adv_r, adv_c)
+        self._actor_critic.optimizer.zero_grad()
 
-                #collect stats
-                epoch_kls.append(stats.get("approx_kl", 0.0))
-                for k, v in stats.items():
-                    update_stats[k].append(v)
+        # 1. Forward Pass with gradient tracking for update!
+        new_logp, entropy, pred_value_r, pred_value_c = self._actor_critic.evaluate_actions(obs, act)
 
-            # KL Based Early Stopping (on epoch level)
-            mean_kl = np.mean(epoch_kls)
-            if self.cfg.algo.use_kl_early_stopping:
-                if mean_kl > self.cfg.algo.early_stopping_target_kl:
-                    print("BREAK - ALERT !!! DANGEROUSLY HIGH KL DIVERGENCE")
-                    break
+        # Policy Gradient Loss
+        ratio = torch.exp(new_logp - logp)
+        ratio_clipped = torch.clamp(ratio, 1.0 - self.cfg.algo.clip_epsilon, 1.0 + self.cfg.algo.clip_epsilon)
+        loss = -torch.min(ratio*adv, ratio_clipped * adv).mean()
 
-        # Final Cleanup
-        avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
-        return avg_stats
+        #Reward Value Loss
+        value_rew_loss = nn.functional.mse_loss(pred_value_r, target_value_r)
+        loss -= self.cfg.algo.beta_value_reward * value_rew_loss
+
+        #Cost Value Loss
+        value_cost_loss = nn.functional.mse_loss(pred_value_r, target_value_r)
+        loss -= self.cfg.algo.beta_value_cost * value_cost_loss
+
+        loss.backward()
+
+        if self.cfg.algo.use_max_grad_norm:
+            clip_grad_norm_(
+                self._actor_critic.optimizer.parameters(),
+                self.cfg.algo.max_grad_norm,
+            )
+        self._actor_critic.optimizer.step()
 
 
-    def compute_loss(self, data):
-        ppo_loss, stats = super().compute_loss(data)
 
-        obs = data['obs']
-        c_ret = data['c_ret']
 
-        c_val = self.agent.get_cost_value(obs)
-        c_loss = torch.nn.functional.mse_loss(c_val, c_ret)
-        c_loss = c_loss * 0.5
 
-        stats["cost_value_loss"] = c_loss.item()
-        return ppo_loss, c_loss, stats
+
