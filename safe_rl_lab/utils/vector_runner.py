@@ -9,7 +9,7 @@ class VectorRunner:
         self.cfg = cfg
 
         #Reset once
-        self.obs, _ = self.env.reset()
+        self.obs, _ = self.env.reset(seed=cfg.seed)
         self.obs = torch.as_tensor(self.obs, dtype=torch.float32, device=self.device)
         self.done = torch.zeros(env.num_envs, device=self.device)
 
@@ -46,7 +46,10 @@ class VectorRunner:
             if buffer.use_cost:
                 costs = info["cost"] * self.cfg.algo.cost_scaling
                 cost_tensor = torch.as_tensor(costs, device=self.device)
-                cval = agent.get_cost_value(self.obs)
+                if self.cfg.algo.a2c_architecture == "separate":
+                    cval = agent.get_cost_value(self.obs)
+                else:
+                    cval = agent_info["cval"]
 
 
             # 4. Collection: Capture episodic info

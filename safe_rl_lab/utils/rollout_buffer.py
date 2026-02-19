@@ -161,7 +161,7 @@ class PhasicBuffer:
 
                 mb_obs = flat_obs[start:end]
 
-                dist, _ = agent.model(mb_obs)
+                dist = agent.actor(mb_obs)
 
                 self.old_means.flatten(0,1)[start:end] = dist.mean
                 self.old_stds.flatten(0,1)[start:end] = dist.stddev

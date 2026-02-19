@@ -1,13 +1,13 @@
 import torch
 import torch.nn as nn
-from safe_rl_lab.models.actor_critic import GaussianActor
 from safe_rl_lab.utils.model_utils import build_mlp_network
 from torch.distributions import Normal
 
 
 class JointActorCritic(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, output_activation, weight_initialization_mode):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, output_activation, weight_initialization_mode, cfg):
         super().__init__()
+        self.cfg = cfg
         self.encoder = build_mlp_network(
             sizes=[obs_dim] + hidden_sizes,
             activation=activation,
@@ -22,8 +22,7 @@ class JointActorCritic(nn.Module):
         self.cost_critic_head = nn.Linear(hidden_sizes[-1], 1)
 
         #init optimizer
-        lr = self.cfg.algo.lr
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.algo.lr)
 
 
 ################################################################################
@@ -39,13 +38,15 @@ class JointActorCritic(nn.Module):
             std = torch.exp(self.log_std)
             pd = Normal(mu, std)
 
-            val = self.reward_critic_head(hidden)
+            val = self.reward_critic_head(hidden).flatten()
 
             action = pd.sample()
             logp = pd.log_prob(action).sum(-1)
 
-
             agent_info = {"val": val, "logp": logp}
+            if self.cfg.algo.use_cost:
+                cval = self.cost_critic_head(hidden)
+                agent_info["cval"] = cval.flatten()
 
         return action, agent_info
 
@@ -64,6 +65,21 @@ class JointActorCritic(nn.Module):
         reward_prediction = self.reward_critic_head(hidden)
         cost_prediction = self.cost_critic_head(hidden)
         return logp, entropy, reward_prediction, cost_prediction
+
+    def get_value(self, obs):
+        hidden = self.encoder(obs)
+        return self.reward_critic_head(hidden).flatten()
+
+    def get_cost_value(self, obs):
+        hidden = self.encoder(obs)
+        return self.cost_critic_head(hidden).flatten()
+
+    def get_distribution(self, obs):
+        hidden = self.encoder(obs)
+        mu = self.actor_head(hidden)
+        std = torch.exp(self.log_std)
+        pd = Normal(mu, std)
+        return pd
 
     # --- PPG Specific Methods ---
 

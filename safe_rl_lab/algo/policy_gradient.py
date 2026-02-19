@@ -79,7 +79,7 @@ class PolicyGradient(BaseAlgo, ABC):
         )
 
         original_obs = data["obs"]
-        old_distribution = self._actor_critic.actor(data["obs"])
+        old_distribution = self._actor_critic.get_distribution(obs)
 
         update_counts = 0
         final_kl = 0.0
@@ -94,6 +94,7 @@ class PolicyGradient(BaseAlgo, ABC):
 
             for (obs, act, logp, target_value_r, target_value_c, adv_r, adv_c,) in dataloader:
 
+                #SEPARATE OPTIMIZATION OF THREE NETWORKS
                 if self.cfg.algo.a2c_architecture == "separate":
                     #update reward critic and store loss
                     v_loss_item = self._update_reward_critic(obs, target_value_r)
@@ -109,13 +110,16 @@ class PolicyGradient(BaseAlgo, ABC):
                     update_stats["pi_loss"].append(pi_loss_item)
                     for key, value in loss_update_stats.items():
                         update_stats[key].append(value)
+
+
+                # JOINT OPTIMIZATION OF ACTOR/ REWARD CRITIC / COST CRITIC
                 else:
                     joint_update_stats = self._joint_update(obs, act, logp, target_value_r, target_value_c, adv_r, adv_c)
                     for key, value in joint_update_stats.items():
                         update_stats[key].append(value)
 
 
-            new_distribution = self._actor_critic.actor(original_obs)
+            new_distribution = self._actor_critic.get_distribution(original_obs)
             kl = (
                 torch.distributions.kl.kl_divergence(old_distribution, new_distribution)
                 .sum(-1, keepdim=True)
@@ -170,7 +174,7 @@ class PolicyGradient(BaseAlgo, ABC):
         return loss.item()
 
 
-    def _update_cost_critic(self, obs: torch.Tensor, target_value_c: torch.Tensor) -> None:
+    def _update_cost_critic(self, obs: torch.Tensor, target_value_c: torch.Tensor):
         self._actor_critic.cost_critic_optimizer.zero_grad()
         predictions = self._actor_critic.cost_critic(obs)
         loss = nn.functional.mse_loss(predictions, target_value_c)
@@ -206,7 +210,20 @@ class PolicyGradient(BaseAlgo, ABC):
         return adv_r
 
     def _joint_update(self, obs, act, logp, target_value_r, target_value_c, adv_r, adv_c):
-        pass
+        adv = self._compute_adv_surrogate(adv_r, adv_c)
+        self._actor_critic.optimizer.zero_grad()
+
+        loss, update_stats = self._joint_loss(obs, act, logp, adv, target_value_r, target_value_c)
+        loss.backward()
+
+        if self.cfg.algo.use_max_grad_norm:
+            clip_grad_norm_(
+                self._actor_critic.parameters(),
+                self.cfg.algo.max_grad_norm,
+            )
+
+        self._actor_critic.optimizer.step()
+        return update_stats
 
     @abstractmethod
     def _loss_pi(self, obs, act, logp, adv):
@@ -217,4 +234,8 @@ class PolicyGradient(BaseAlgo, ABC):
 
     def _anneal_lr(self):
         """Maybe in optimizer wrapper?"""
+        pass
+
+    @abstractmethod
+    def _joint_loss(self, obs, act, logp, adv, target_value_r, target_value_c):
         pass

@@ -1,8 +1,6 @@
 import torch
 from .ppo import PPO
 from safe_rl_lab.utils.lagrange import PIDLagrange
-import torch.nn as nn
-from torch.nn.utils.clip_grad import clip_grad_norm_
 
 class PPOLag(PPO):
     def __init__(self, logger, runner, agent, cfg, device="cpu"):
@@ -57,34 +55,7 @@ class PPOLag(PPO):
         penalty = self.lagrange.lagrangian_multiplier
         return (adv_r - penalty * adv_c) / (1 + penalty)
 
-    def _joint_update(self, obs, act, logp, target_value_r, target_value_c, adv_r, adv_c):
-        adv = self._compute_adv_surrogate(adv_r, adv_c)
-        self._actor_critic.optimizer.zero_grad()
 
-        # 1. Forward Pass with gradient tracking for update!
-        new_logp, entropy, pred_value_r, pred_value_c = self._actor_critic.evaluate_actions(obs, act)
-
-        # Policy Gradient Loss
-        ratio = torch.exp(new_logp - logp)
-        ratio_clipped = torch.clamp(ratio, 1.0 - self.cfg.algo.clip_epsilon, 1.0 + self.cfg.algo.clip_epsilon)
-        loss = -torch.min(ratio*adv, ratio_clipped * adv).mean()
-
-        #Reward Value Loss
-        value_rew_loss = nn.functional.mse_loss(pred_value_r, target_value_r)
-        loss -= self.cfg.algo.beta_value_reward * value_rew_loss
-
-        #Cost Value Loss
-        value_cost_loss = nn.functional.mse_loss(pred_value_r, target_value_r)
-        loss -= self.cfg.algo.beta_value_cost * value_cost_loss
-
-        loss.backward()
-
-        if self.cfg.algo.use_max_grad_norm:
-            clip_grad_norm_(
-                self._actor_critic.optimizer.parameters(),
-                self.cfg.algo.max_grad_norm,
-            )
-        self._actor_critic.optimizer.step()
 
 
 

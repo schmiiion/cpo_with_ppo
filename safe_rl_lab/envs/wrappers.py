@@ -13,14 +13,25 @@ def make_env(gym_id, seed, idx, capture_video, run_name, gamma):
         env = RecordEpisodeStatistics(env)
         env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
+
+        #could be added i think
         #env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        #env = gym.wrappers.NormalizeReward(env, gamma=gamma)
         #env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+
+        #might destroy mapping from reward to cost
+        #env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+
+        # --- MISSING SEEDING ADDED HERE ---
+        # Seed the spaces to guarantee deterministic sampling
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        # ----------------------------------
+
         if capture_video and idx == 0: #TODO hardcoded video omitting
             env = gym.wrappers.RecordVideo(
                 env,
                 f"logs/videos/{run_name}",
-                episode_trigger=lambda ep: ep % 30 == 0)
+                episode_trigger=lambda ep: ep % 30000 == 0 and ep > 0,)
         return env
     return thunk
 

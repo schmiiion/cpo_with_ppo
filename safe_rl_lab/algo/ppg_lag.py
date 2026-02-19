@@ -1,20 +1,31 @@
 from collections import defaultdict
 import numpy as np
-from safe_rl_lab.algo.policy_gradient import PolicyGradient
+from torch.utils.data import DataLoader, TensorDataset
+
+from safe_rl_lab.algo.ppo import PPO
 from safe_rl_lab.utils.lagrange import PIDLagrange
 from safe_rl_lab.utils.rollout_buffer import RolloutBuffer, PhasicBuffer
 import torch
 
 
 
-class PPGLag(PolicyGradient):
+class PPGLag(PPO):
 
-    def __init__(self, logger, runner, agent, policy_optimizer, value_optimizer, cost_optimizer,cfg, device):
-        super().__init__(logger=logger, runner=runner, agent=agent,optimizer=policy_optimizer, cfg=cfg, device=device)
-        self.agent: PPGAgent = agent
-        self.value_optimizer = value_optimizer
-        self.buffer = None
-        self.cost_optimizer = cost_optimizer
+    def __init__(self, logger, runner, a2c, cfg, device):
+        super().__init__(logger=logger, runner=runner, a2c=a2c, cfg=cfg, device=device)
+        self.num_phases = self.cfg.total_steps // (self.cfg.algo.rollout_size * self.cfg.algo.N_pi * self.cfg.env.num_envs) + 10 #buffer to get over 1e7
+        self.buffer = RolloutBuffer(
+            num_steps=self.cfg.algo.rollout_size,
+            num_envs=self.runner.num_envs,
+            obs_shape=self.runner.obs_shape,
+            act_shape=self.runner.act_shape,
+            device=self.device,
+            use_cost=self.cfg.algo.use_cost,
+            standardized_adv_r=self.cfg.algo.normalize_adv_r,
+            standardized_adv_c=cfg.algo.normalize_adv_c,
+        )
+        self.ppg_buffer = PhasicBuffer(self.cfg, self.runner.num_envs, self.runner.obs_shape, self.runner.act_shape,
+                                       device=self.device)
         self.lagrange = PIDLagrange(
             pid_kp=cfg.algo.k_p,
             pid_ki=cfg.algo.k_i,
@@ -27,6 +38,7 @@ class PPGLag(PolicyGradient):
             penalty_max=cfg.algo.penalty_max,
             lagrangian_multiplier_init=cfg.algo.lagrangian_multiplier_init,
             cost_limit=cfg.algo.cost_limit)
+
 
     def learn(self):
         """
@@ -45,20 +57,8 @@ class PPGLag(PolicyGradient):
                 1. Optimize L^joint
                 2. Optimize L^Value
         """
-        num_phases = self.cfg.total_steps // (self.cfg.algo.rollout_size * self.cfg.algo.N_pi)
 
-        self.ppg_buffer = PhasicBuffer(self.cfg, self.runner.num_envs, self.runner.obs_shape, self.runner.act_shape, device=self.device)
-
-        self.buffer = RolloutBuffer(
-            num_steps=self.cfg.algo.rollout_size,
-            num_envs=self.runner.num_envs,
-            obs_shape=self.runner.obs_shape,
-            act_shape=self.runner.act_shape,
-            device=self.device,
-            use_cost=self.cfg.algo.use_cost,
-        )
-
-        for phase in range(num_phases):
+        for phase in range(self.num_phases):
 
             for policy_phase_iteration in range(1, self.cfg.algo.N_pi + 1):
                 self.policy_phase(policy_phase_iteration)
@@ -80,27 +80,22 @@ class PPGLag(PolicyGradient):
             super()._log_sps(self.global_step)
 
         # 1. Sample Buffer and return bootstrap values
-        global_step, rollout_info, last_val, last_done, last_cval = self.runner.run(self.agent, self.buffer,
-                                                                                    self.global_step)
+        global_step, rollout_info, last_val, last_done, last_cval = self.runner.run(self._actor_critic, self.buffer, self.global_step)
         self.global_step = global_step
         self._process_episodic_stats(rollout_info) # self._safe_if_best(global_step)
 
-        #  2. Compute GAE (inside Buffer)
+        #  2. Compute GAE (inside Buffer) and update lambda
         self.buffer.compute_gae(last_val, last_done, self.cfg.algo.gae.gamma, self.cfg.algo.gae.lam, last_cval)
-
-        data = self.buffer.get()
-        # Update Lambdas and compute adv_total
-        adv_total = self.update_lambda_and_augment_adv(rollout_info, data)
-        data["adv"] = adv_total
+        self.update_lambda(rollout_info)
 
         # 3. Policy update loop
         for policy_epoch in range(1, self.cfg.algo.E_pi + 1):
-            update_state = self.update_policy(data, rollout_info)
-            self.logger.log(metrics=update_state, step=self.global_step, prefix="policy_phase")
+            stats = self.update_policy()
+            self.logger.log(metrics=stats, step=self.global_step, prefix="policy_phase")
 
         # 4. Value update loop
         for value_epoch in range(1, self.cfg.algo.E_v + 1):
-            stats = self.update_value_functions(data)
+            stats = self.update_value_functions()
             self.logger.log(metrics=stats, step=self.global_step, prefix="policy_phase")
 
         # 5. Populate PPG Buffer
@@ -109,7 +104,7 @@ class PPGLag(PolicyGradient):
 
     def auxiliary_phase(self):
         # 1. compute pi_theta_old for all states in phasic buffer
-        self.ppg_buffer.compute_densities_for_all_states(agent=self.agent, batch_size=self.cfg.algo.N_pi*self.cfg.algo.rollout_size)
+        self.ppg_buffer.compute_densities_for_all_states(agent=self._actor_critic, batch_size=self.cfg.algo.N_pi*self.cfg.algo.rollout_size)
 
         # 2. Distill Features in Policy Network and optimize Value Network
         data = self.ppg_buffer.get()
@@ -129,8 +124,8 @@ class PPGLag(PolicyGradient):
 
                 # RETRIEVE DATA
                 mb_obs = data["obs"][mb_inds]
-                mb_vtarg = data["v_targ"][mb_inds]
-                mb_ctarg = data["c_targ"][mb_inds]
+                mb_targ_reward = data["v_targ"][mb_inds]
+                mb_targ_cost = data["c_targ"][mb_inds]
                 mb_old_mean = data["old_mean"][mb_inds]
                 mb_old_std = data["old_std"][mb_inds]
 
@@ -138,23 +133,23 @@ class PPGLag(PolicyGradient):
                 dist_old = torch.distributions.Normal(mb_old_mean, mb_old_std)
 
                 # Update Policy and distill features
-                self.optimizer.zero_grad()
-                L_joint, joint_metrics = self.compute_L_joint(mb_obs, mb_vtarg, mb_ctarg, dist_old)
+                self._actor_critic.actor_optimizer.zero_grad()
+                L_joint, joint_metrics = self.compute_L_joint(mb_obs, mb_targ_reward, mb_targ_cost, dist_old)
                 L_joint.backward()
-                self.optimizer.step()
+                self._actor_critic.actor_optimizer.step()
 
                 #Update Value Network
-                self.value_optimizer.zero_grad()
-                L_value = self.compute_L_value_unclipped(mb_obs, mb_vtarg)
+                self._actor_critic.reward_critic_optimizer.zero_grad()
+                L_value = self.compute_L_value_unclipped(mb_obs, mb_targ_reward)
                 L_value.backward()
-                self.value_optimizer.step()
+                self._actor_critic.reward_critic_optimizer.step()
                 self.logger.log(metrics={"L_value": L_value.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
 
                 #Update Cost Network
-                self.cost_optimizer.zero_grad()
-                L_cost = self.compute_L_value_unclipped(mb_obs, mb_ctarg)
+                self._actor_critic.cost_critic_optimizer.zero_grad()
+                L_cost = self.compute_L_value_unclipped(mb_obs, mb_targ_cost)
                 L_cost.backward()
-                self.cost_optimizer.step()
+                self._actor_critic.cost_critic_optimizer.step()
                 self.logger.log(metrics={"L_cost": L_cost.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
 
                 #collect metrics over batches
@@ -183,7 +178,7 @@ class PPGLag(PolicyGradient):
 
 ######################### POLICY RELATED ##################################################
 
-    def update_policy(self, data, rollout_info):
+    def update_policy(self):
         """
         1. Normalizes the reward
         2. Splits the batch along algo.mini_epochs
@@ -191,40 +186,37 @@ class PPGLag(PolicyGradient):
             - Call L^Clip computation
             - Optimize actor with L^clip
         """
-        #Create minibatches for |Derived from A.2 Hyperparams: #mb per eoch
-        dataset_size = data["obs"].shape[0]
-        batch_size = dataset_size // self.cfg.algo.number_mb_per_epoch
-        b_inds = np.arange(dataset_size)
-        np.random.shuffle(b_inds)
         update_stats = defaultdict(list)
 
-        for start in range(0, dataset_size, batch_size):
-            end = start + batch_size
-            mb_inds = b_inds[start:end]
-            mb = {k: v[mb_inds] for k, v in data.items()}
+        data = self.buffer.get()
+        obs, act, logp, target_value_r, target_value_c, adv_r, adv_c = (
+            data['obs'],
+            data['act'],
+            data['logp'],
+            data['target_value_r'],
+            data['target_value_c'],
+            data['adv_r'],
+            data['adv_c'],
+        )
 
-            loss, stats = self.compute_L_clip(mb)
+        batch_size = (self.cfg.env.num_envs * self.cfg.algo.rollout_size) // self.cfg.algo.number_mb_per_epoch
+        dataloader = DataLoader(
+            dataset=TensorDataset(obs, act, logp, target_value_r, target_value_c, adv_r, adv_c),
+            batch_size=batch_size,
+            shuffle=True,
+        )
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(self.agent.model.parameters(), self.cfg.algo.max_grad_norm)
-            self.optimizer.step()
+        for (obs, act, logp, target_value_r, target_value_c, adv_r, adv_c,) in dataloader:
 
-            #collect statsdid
-            for k, v in stats.items():
-                update_stats[k].append(v)
+            if self.cfg.algo.a2c_architecture == "separate":
+                pi_loss_item, loss_update_stats = self._update_actor(obs, act, logp, adv_r, adv_c)
+                update_stats["pi_loss"].append(pi_loss_item)
+                for key, value in loss_update_stats.items():
+                    update_stats[key].append(value)
 
-            if self.cfg.algo.use_kl_early_stopping:
-                if stats["approx_kl"] > self.cfg.algo.early_stopping_target_kl:
-                    print("early stopping triggered")
-                    break
-                else:
-                    print("continue")
-
-        # aggregate stats after all epochs
         avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
         return avg_stats
+
 
     def compute_L_clip(self, batch):
         obs = batch['obs']
@@ -254,15 +246,15 @@ class PPGLag(PolicyGradient):
     def compute_L_joint(self, obs, v_targ, c_targ, dist_old):
         joint_metrics = {}
         #1. Compute L_aux
-        policy_val = self.agent.get_policy_value(obs).flatten()
+        policy_val = self._actor_critic.get_aux_reward(obs)
         L_aux_value = 0.5 * ((policy_val - v_targ)**2).mean()
         joint_metrics["L_aux_value"] = L_aux_value.item()
 
-        policy_cost = self.agent.get_policy_cost(obs).flatten()
+        policy_cost = self._actor_critic.get_aux_cost(obs)
         L_aux_cost = 0.5 * ((policy_cost - c_targ) ** 2).mean()
         joint_metrics["L_aux_cost"] = L_aux_cost.item()
 
-        dist_new, _  = self.agent.model(obs)
+        dist_new  = self._actor_critic.actor(obs)
         kl_divergence = torch.distributions.kl_divergence(dist_old, dist_new).mean()
         joint_metrics["KL_Div"] = kl_divergence.item()
 
@@ -273,39 +265,37 @@ class PPGLag(PolicyGradient):
 
 ######################### VALUE RELATED ##################################################
 
-    def update_value_functions(self, data):
-        dataset_size = data["obs"].shape[0]
-        batch_size = dataset_size // self.cfg.algo.number_mb_per_epoch
-        b_inds = np.arange(dataset_size)
-        np.random.shuffle(b_inds)
+    def update_value_functions(self):
         update_stats = defaultdict(list)
 
-        for start in range(0, dataset_size, batch_size):
-            end = start + batch_size
-            mb_inds = b_inds[start:end]
-            mb = {k: v[mb_inds] for k, v in data.items()}
+        data = self.buffer.get()
+        obs, act, logp, target_value_r, target_value_c, adv_r, adv_c = (
+            data['obs'],
+            data['act'],
+            data['logp'],
+            data['target_value_r'],
+            data['target_value_c'],
+            data['adv_r'],
+            data['adv_c'],
+        )
 
-            obs = mb['obs']
-            v_targ = mb["ret"]
-            c_targ = mb["c_ret"]
+        batch_size = (self.cfg.env.num_envs * self.cfg.algo.rollout_size) // self.cfg.algo.number_mb_per_epoch
+        dataloader = DataLoader(
+            dataset=TensorDataset(obs, act, logp, target_value_r, target_value_c, adv_r, adv_c),
+            batch_size=batch_size,
+            shuffle=True,
+        )
 
-            L_value = self.compute_L_value_unclipped(obs, v_targ)
-            self.value_optimizer.zero_grad()
-            L_value.backward()
-            if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(self.agent.value_critic.parameters(), self.cfg.algo.max_grad_norm)
-            self.value_optimizer.step()
-            update_stats["L_value"].append(L_value.item())
+        for (obs, act, logp, target_value_r, target_value_c, adv_r, adv_c,) in dataloader:
+            # update reward critic and store loss
+            v_loss_item = self._update_reward_critic(obs, target_value_r)
+            update_stats["v_loss"].append(v_loss_item)
 
-            L_cost = self.compute_L_value_unclipped(obs, c_targ)
-            self.cost_optimizer.zero_grad()
-            L_cost.backward()
-            if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(self.agent.cost_critic.parameters(), self.cfg.algo.max_grad_norm)
-            self.cost_optimizer.step()
-            update_stats["L_cost"].append(L_cost.item())
+            # optionally update cost critic and store loss
+            if self.cfg.algo.use_cost:
+                c_loss_item = self._update_cost_critic(obs, target_value_c)
+                update_stats["c_loss"].append(c_loss_item)
 
-        # aggregate stats after all epochs
         avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
         return avg_stats
 
@@ -329,46 +319,18 @@ class PPGLag(PolicyGradient):
 
     def compute_L_value_unclipped(self, obs, target, is_cost=False):
         if is_cost:
-            val = self.agent.get_cost_value(obs)
+            val = self._actor_critic.get_cost_value(obs)
         else:
-            val = self.agent.get_value(obs)
+            val = self._actor_critic.get_value(obs)
         L_value = 0.5 * ((val -target)**2).mean()
         return L_value
 
 
 ######################### COST RELATED ##################################################
 
-    def update_value_function123(self, data):
-        dataset_size = data["obs"].shape[0]
-        batch_size = dataset_size // self.cfg.algo.number_mb_per_epoch
-        b_inds = np.arange(dataset_size)
-        np.random.shuffle(b_inds)
-        update_stats = defaultdict(list)
+    def update_lambda(self, rollout_info):
+        data = self.buffer.get()
 
-        for start in range(0, dataset_size, batch_size):
-            end = start + batch_size
-            mb_inds = b_inds[start:end]
-            mb = {k: v[mb_inds] for k, v in data.items()}
-
-            loss, stats = self.compute_L_value_clipped(mb)
-
-            self.value_optimizer.zero_grad()
-            loss.backward()
-            if self.cfg.algo.max_grad_norm is not None and self.cfg.algo.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(self.agent.value_critic.parameters(), self.cfg.algo.max_grad_norm)
-            self.value_optimizer.step()
-
-            #collect statsdid
-            for k, v in stats.items():
-                update_stats[k].append(v)
-
-        # aggregate stats after all epochs
-        avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
-        return avg_stats
-
-
-
-    def update_lambda_and_augment_adv(self, rollout_info, data):
         # --- SECTION 1: Lagrangian Update ---
         if "scaled_cost" in rollout_info:
             Jc = rollout_info["scaled_cost"]
@@ -384,17 +346,18 @@ class PPGLag(PolicyGradient):
             "cost/cost_violation": Jc - self.cfg.algo.cost_limit
         }, step=self.global_step)
 
-        c_adv = data['c_adv']
-        adv = data["adv"]
 
-        if self.cfg.algo.normalize_adv:
-            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            c_adv = (c_adv - c_adv.mean())
+    def _compute_adv_surrogate(self, adv_r: torch.Tensor, adv_c: torch.Tensor) -> torch.Tensor:
+        """Compute surrogate loss.
 
-        adv_total = (adv - cur_lambda * c_adv) / (1 + cur_lambda)
-        return adv_total
+        Policy Gradient only use reward advantage.
 
-###### TO MAKE ABC HAPPY:
+        Args:
+            adv_r (torch.Tensor): The ``reward_advantage`` sampled from buffer.
+            adv_c (torch.Tensor): The ``cost_advantage`` sampled from buffer.
 
-    def compute_loss(self, batch):
-        pass
+        Returns:
+            The advantage function of reward to update policy network.
+        """
+        penalty = self.lagrange.lagrangian_multiplier
+        return (adv_r - penalty * adv_c) / (1 + penalty)

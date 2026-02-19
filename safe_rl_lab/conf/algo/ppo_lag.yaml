@@ -1,17 +1,29 @@
 name: "PPO_Lag"
 
-#PPO Lag specifics
+###PPO Lag specifics
 update_epochs: 8
 batch_size: 64
 rollout_size: 512
 
-#lagrange
+###architecture
+a2c_architecture: "separate"
+#if shared:
+beta_reward: 0.5
+beta_cost: 0.5
+
+hidden_sizes: [256, 256]
+activation: "tanh"
+output_activation: "identity"
+weight_initialization_method: "orthogonal"
+
+
+###lagrange
 use_cost: true
-cost_limit: 25
-cost_scaling: 1.0
+cost_limit: 2.5
+cost_scaling: 0.1
 #pid
-k_i: 0.01
-k_p: 0.0.1
+k_i: 0.005
+k_p: 0.0
 k_d: 0.0
 d_delay: 15
 pid_delta_p_ema_alpha: 0.95
@@ -21,34 +33,27 @@ diff_norm: False
 penalty_max: 100.0
 lagrangian_multiplier_init: 0.0
 
-#architecture
-a2c_architecture: "separate"
-hidden_sizes: [256, 256]
-activation: "tanh"
-output_activation: "identity"
-weight_initialization_method: "orthogonal"
-
-#optimization
+###optimization
 lr: 1e-4
 anneal_lr: false
 clip_epsilon: 0.2
 entropy_coef: 0.00
 
-#normalization
+###normalization
 use_max_grad_norm: true
 max_grad_norm: 5
 normalize_adv_r: true
 normalize_adv_c: true
 
-#regularization
+###regularization
 use_critic_norm: false
 critic_norm_coef: 5000
 
-#gae
+###gae
 gae:
   gamma: 0.99
   lam: 0.95
 
-#early stopping
+###early stopping
 kl_early_stop: true
 target_kl: 0.01

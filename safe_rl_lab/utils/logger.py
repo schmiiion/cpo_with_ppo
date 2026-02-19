@@ -1,12 +1,10 @@
 import wandb
 from omegaconf import OmegaConf, DictConfig
 import time
-from safe_rl_lab.utils.other_stuff import seed_all
 
 
 class Logger:
     def __init__(self, cfg: DictConfig, is_debugging):
-        seed_all(cfg.seed)
         self._is_active = not is_debugging
         self.cfg = cfg
 
@@ -52,7 +50,9 @@ class Logger:
             metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
 
         if self.cfg.algo.use_cost:
-            metrics["rollout/cost_limit"] = self.cfg.algo.cost_limit
+            cost_limit = self.cfg.algo.cost_limit * self.cfg.algo.cost_scaling
+            assert cost_limit == 25
+            metrics["rollout/cost_limit"] = cost_limit
 
         wandb.log(metrics, step=step)
 

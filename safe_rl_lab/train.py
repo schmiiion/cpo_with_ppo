@@ -8,11 +8,14 @@ from safe_rl_lab.factories.algo_factory import AlgoFactory
 import torch
 
 from safe_rl_lab.utils.logger import Logger
+from safe_rl_lab.utils.other_stuff import seed_all
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     is_debugging = sys.gettrace() is not None
+
+    seed_all(cfg.seed)
 
     logger = Logger(cfg, is_debugging=is_debugging)
 

@@ -19,6 +19,8 @@ def seed_all(seed: int):
     # This might slow down training slightly, but guarantees exactness.
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    # Forces PyTorch to use deterministic algorithms everywhere
+    torch.use_deterministic_algorithms(True)
 
     # 5. Environment variable (sometimes used by external libs)
     os.environ['PYTHONHASHSEED'] = str(seed)
