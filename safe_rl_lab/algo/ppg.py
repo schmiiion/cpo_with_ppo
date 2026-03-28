@@ -3,17 +3,16 @@ import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 
 from safe_rl_lab.algo.ppo import PPO
-from safe_rl_lab.utils.lagrange import PIDLagrange
 from safe_rl_lab.utils.rollout_buffer import RolloutBuffer, PhasicBuffer
 import torch
 
 
-
-class PPGLag(PPO):
+class PPG(PPO):
 
     def __init__(self, logger, runner, a2c, cfg, device):
         super().__init__(logger=logger, runner=runner, a2c=a2c, cfg=cfg, device=device)
-        self.num_phases = self.cfg.total_steps // (self.cfg.algo.rollout_size * self.cfg.algo.N_pi * self.cfg.env.num_envs) + 2 #buffer to get over 1e7
+        self.num_phases = self.cfg.total_steps // (
+                    self.cfg.algo.rollout_size * self.cfg.algo.N_pi * self.cfg.env.num_envs) + 2  # buffer to get over 1e7
         print("Number of phases: ", self.num_phases)
         self.buffer = RolloutBuffer(
             num_steps=self.cfg.algo.rollout_size,
@@ -27,19 +26,6 @@ class PPGLag(PPO):
         )
         self.ppg_buffer = PhasicBuffer(self.cfg, self.runner.num_envs, self.runner.obs_shape, self.runner.act_shape,
                                        device=self.device)
-        self.lagrange = PIDLagrange(
-            pid_kp=cfg.algo.k_p,
-            pid_ki=cfg.algo.k_i,
-            pid_kd=cfg.algo.k_d,
-            pid_d_delay=cfg.algo.d_delay,
-            pid_delta_d_ema_alpha=cfg.algo.pid_delta_d_ema_alpha,
-            pid_delta_p_ema_alpha=cfg.algo.pid_delta_p_ema_alpha,
-            sum_norm=cfg.algo.sum_norm,
-            diff_norm=cfg.algo.diff_norm,
-            penalty_max=cfg.algo.penalty_max,
-            lagrangian_multiplier_init=cfg.algo.lagrangian_multiplier_init,
-            cost_limit=cfg.algo.cost_limit)
-
 
     def learn(self):
         """
@@ -80,13 +66,13 @@ class PPGLag(PPO):
             super()._log_sps(self.global_step)
 
         # 1. Sample Buffer and return bootstrap values
-        global_step, rollout_info, last_val, last_done, last_cval = self.runner.run(self._actor_critic, self.buffer, self.global_step)
+        global_step, rollout_info, last_val, last_done, last_cval = self.runner.run(self._actor_critic, self.buffer,
+                                                                                    self.global_step)
         self.global_step = global_step
-        self._process_episodic_stats(rollout_info) # self._safe_if_best(global_step)
+        self._process_episodic_stats(rollout_info)  # self._safe_if_best(global_step)
 
         #  2. Compute GAE (inside Buffer) and update lambda
         self.buffer.compute_gae(last_val, last_done, self.cfg.algo.gae.gamma, self.cfg.algo.gae.lam, last_cval)
-        self.update_lambda(rollout_info)
 
         # 3. Policy update loop
         for policy_epoch in range(1, self.cfg.algo.E_pi + 1):
@@ -101,10 +87,10 @@ class PPGLag(PPO):
         # 5. Populate PPG Buffer
         self.buffer.populate_phasic_buffer(self.ppg_buffer)
 
-
     def auxiliary_phase(self):
         # 1. compute pi_theta_old for all states in phasic buffer
-        self.ppg_buffer.compute_densities_for_all_states(agent=self._actor_critic, batch_size=self.cfg.algo.N_pi*self.cfg.algo.rollout_size)
+        self.ppg_buffer.compute_densities_for_all_states(agent=self._actor_critic,
+                                                         batch_size=self.cfg.algo.N_pi * self.cfg.algo.rollout_size)
 
         # 2. Distill Features in Policy Network and optimize Value Network
         data = self.ppg_buffer.get()
@@ -125,7 +111,6 @@ class PPGLag(PPO):
                 # RETRIEVE DATA
                 mb_obs = data["obs"][mb_inds]
                 mb_targ_reward = data["v_targ"][mb_inds]
-                mb_targ_cost = data["c_targ"][mb_inds]
                 mb_old_mean = data["old_mean"][mb_inds]
                 mb_old_std = data["old_std"][mb_inds]
 
@@ -134,49 +119,38 @@ class PPGLag(PPO):
 
                 # Update Policy and distill features
                 self._actor_critic.actor_optimizer.zero_grad()
-                L_joint, joint_metrics = self.compute_L_joint(mb_obs, mb_targ_reward, mb_targ_cost, dist_old)
+                L_joint, joint_metrics = self.compute_L_joint(mb_obs, mb_targ_reward, dist_old)
                 L_joint.backward()
                 self._actor_critic.actor_optimizer.step()
 
-                #Update Value Network
+                # Update Value Network
                 self._actor_critic.reward_critic_optimizer.zero_grad()
                 L_value = self.compute_L_value_unclipped(mb_obs, mb_targ_reward)
                 L_value.backward()
                 self._actor_critic.reward_critic_optimizer.step()
-                self.logger.log(metrics={"L_value": L_value.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
+                self.logger.log(metrics={"L_value": L_value.item()}, step=self.global_step,
+                                prefix="auxiliary_phase_Critic")
 
-                #Update Cost Network
-                self._actor_critic.cost_critic_optimizer.zero_grad()
-                L_cost = self.compute_L_value_unclipped(mb_obs, mb_targ_cost)
-                L_cost.backward()
-                self._actor_critic.cost_critic_optimizer.step()
-                self.logger.log(metrics={"L_cost": L_cost.item()}, step=self.global_step, prefix="auxiliary_phase_Critic")
 
-                #collect metrics over batches
+                # collect metrics over batches
                 phase_stats["L_value"].append(L_value.item())
-                phase_stats["L_cost"].append(L_cost.item())
                 phase_stats["L_joint"].append(L_joint.item())
 
-                #debug into aux phase:
-                self.logger.log(
-                    metrics={
-                        "debug_aux/ActorValueHeadL": joint_metrics["L_aux_reward"],
-                        "debug_aux/ActorCostHeadL": joint_metrics["L_aux_cost"],
-                        "debug_aux/KL_Divergence": joint_metrics["KL_Div"],
-                        "debug_aux/L_value": L_value.item(),
-                        "debug_aux/L_cost": L_cost.item(),
-                        "debug_aux/L_joint": L_joint.item(),
-                        "debug_aux/aux_step": aux_opt_step
-                    },
-                step=None)
+                # debug into aux phase:
+                self.logger.log(metrics={
+                    "debug_aux/ActorValueHeadL": joint_metrics["L_aux_reward"],
+                    "debug_aux/KL_Divergence": joint_metrics["KL_Div"],
+                    "debug_aux/L_value": L_value.item(),
+                    "debug_aux/L_joint": L_joint.item(),
+                    "debug_aux/aux_step": aux_opt_step
+                } , step=None)
                 aux_opt_step += 1
 
         # --- END OF PHASE: Log Averages to Main Dashboard ---
         avg_stats = {k: np.mean(v) for k, v in phase_stats.items()}
         self.logger.log(metrics=avg_stats, step=self.global_step, prefix="auxiliary_phase")
 
-
-######################### POLICY RELATED ##################################################
+    ######################### POLICY RELATED ##################################################
 
     def update_policy(self):
         """
@@ -217,7 +191,6 @@ class PPGLag(PPO):
         avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
         return avg_stats
 
-
     def compute_L_clip(self, batch):
         obs = batch['obs']
         act = batch['act']
@@ -233,7 +206,7 @@ class PPGLag(PPO):
         ratio = logratio.exp()
 
         with torch.no_grad():
-            approx_kl =((ratio - 1) - logratio).mean().item()
+            approx_kl = ((ratio - 1) - logratio).mean().item()
             stats['approx_kl'] = approx_kl
 
         surr1 = ratio * adv
@@ -242,28 +215,22 @@ class PPGLag(PPO):
 
         return policy_loss, stats
 
-
-    def compute_L_joint(self, obs, v_targ, c_targ, dist_old):
+    def compute_L_joint(self, obs, v_targ, dist_old):
         joint_metrics = {}
-        #1. Compute L_aux
+        # 1. Compute L_aux
         policy_val = self._actor_critic.get_aux_reward(obs)
-        L_aux_reward = 0.5 * ((policy_val - v_targ)**2).mean()
+        L_aux_reward = 0.5 * ((policy_val - v_targ) ** 2).mean()
         joint_metrics["L_aux_reward"] = L_aux_reward.item()
 
-        policy_cost = self._actor_critic.get_aux_cost(obs)
-        L_aux_cost = 0.5 * ((policy_cost - c_targ) ** 2).mean()
-        joint_metrics["L_aux_cost"] = L_aux_cost.item()
-
-        dist_new  = self._actor_critic.actor(obs)
+        dist_new = self._actor_critic.actor(obs)
         kl_divergence = torch.distributions.kl_divergence(dist_old, dist_new).mean()
         joint_metrics["KL_Div"] = kl_divergence.item()
 
-        L_joint = L_aux_reward + (self.cfg.algo.cost_loss_coef * L_aux_cost) + (self.cfg.algo.beta_clone * kl_divergence)
+        L_joint = L_aux_reward + (self.cfg.algo.beta_clone * kl_divergence)
 
         return L_joint, joint_metrics
 
-
-######################### VALUE RELATED ##################################################
+    ######################### VALUE RELATED ##################################################
 
     def update_value_functions(self):
         update_stats = defaultdict(list)
@@ -299,7 +266,6 @@ class PPGLag(PPO):
         avg_stats = {k: np.mean(v) for k, v in update_stats.items()}
         return avg_stats
 
-
     def compute_L_value_clipped(self, batch):
         obs = batch['obs']
         old_val = batch["val"]
@@ -316,36 +282,15 @@ class PPGLag(PPO):
 
         return v_loss, {"v_loss": v_loss.item()}
 
-
     def compute_L_value_unclipped(self, obs, target, is_cost=False):
         if is_cost:
             val = self._actor_critic.get_cost_value(obs)
         else:
             val = self._actor_critic.get_value(obs)
-        L_value = 0.5 * ((val -target)**2).mean()
+        L_value = 0.5 * ((val - target) ** 2).mean()
         return L_value
 
-
-######################### COST RELATED ##################################################
-
-    def update_lambda(self, rollout_info):
-        data = self.buffer.get()
-
-        # --- SECTION 1: Lagrangian Update ---
-        if "scaled_cost" in rollout_info:
-            Jc = rollout_info["scaled_cost"]
-        else:
-            Jc = data["cost"].mean() * self.cfg.env.max_episode_steps
-
-        self.lagrange.update(Jc)
-        cur_lambda = self.lagrange.lagrangian_multiplier
-
-        self.logger.log({
-            "cost/lambda": cur_lambda,
-            "cost/Jc": Jc,
-            "cost/cost_violation": Jc - self.cfg.algo.cost_limit
-        }, step=self.global_step)
-
+    ######################### COST RELATED ##################################################
 
     def _compute_adv_surrogate(self, adv_r: torch.Tensor, adv_c: torch.Tensor) -> torch.Tensor:
         """Compute surrogate loss.
@@ -359,5 +304,4 @@ class PPGLag(PPO):
         Returns:
             The advantage function of reward to update policy network.
         """
-        penalty = self.lagrange.lagrangian_multiplier
-        return (adv_r - penalty * adv_c) / (1 + penalty)
+        return adv_r

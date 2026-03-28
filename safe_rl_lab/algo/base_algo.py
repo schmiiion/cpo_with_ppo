@@ -12,7 +12,7 @@ class BaseAlgo(ABC):
         self.device = device
         self.global_step = 0
 
-        self.rollout_rolling_stats = defaultdict(lambda: deque(maxlen=100))
+        self.rollout_rolling_stats = {"rew": deque(maxlen=10), "raw_cost": deque(maxlen=75)}
 
         self.last_log_time = 0
         self.sps_window = deque(maxlen=5)

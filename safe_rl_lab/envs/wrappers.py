@@ -19,7 +19,7 @@ def make_env(gym_id, seed, idx, capture_video, run_name, gamma):
         #env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
 
         #might destroy mapping from reward to cost
-        #env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        # env = gym.wrappers.NormalizeReward(env, gamma=gamma)
 
         # --- MISSING SEEDING ADDED HERE ---
         # Seed the spaces to guarantee deterministic sampling

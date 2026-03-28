@@ -25,7 +25,7 @@ class PolicyGradient(BaseAlgo, ABC):
         3. Compute policy gradient (Loss?)
         4. Update policy
         """
-        num_updates = self.cfg.total_steps // self.cfg.algo.rollout_size
+        num_updates = self.cfg.total_steps // (self.cfg.algo.rollout_size * self.cfg.env.num_envs) + 5
 
         self.buffer = RolloutBuffer(
             num_steps=self.cfg.algo.rollout_size,

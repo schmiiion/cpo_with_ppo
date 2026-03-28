@@ -4,10 +4,12 @@ defaults:
   - env: safety_car
 
 # Global Runner Settings
-seed: 222 #42, 69, 222
+seed: 0 #0 x, 25x,42 x, 69 x, 222 x
 total_steps: 10000000
 sps_logging_interval: 10
 device: "cpu"
+
+optimize: false
 
 # WANDB (Global logging settings)
 wandb:

@@ -1,34 +1,52 @@
 name: "PPG"
 
-#algo hyperparams
-lr: 1e-4
+#PPG specifics
+N_pi: 32
+E_pi: 1
+E_v: 3
+E_aux: 8
+number_mb_per_epoch: 8
+rollout_size: 512
+aux_mb_per_N_pi: 16
+beta_clone: 1.75
+cost_loss_coef: 0.3
+
+###architecture
+a2c_architecture: "separate"
+#if shared:
+beta_reward: 0.5
+beta_cost: 0.5
+
+hidden_sizes: [256, 256]
+activation: "tanh"
+output_activation: "identity"
+weight_initialization_method: "orthogonal"
+
+###optimization
+lr: 0.00005
 anneal_lr: false
 clip_epsilon: 0.2
-entropy_coef: 0.0
-max_grad_norm: 0.5
-normalize_adv: true
+entropy_coef: 0.00
 
-#PPG specifics
-N_pi: 16
-E_pi: 1
-E_v: 1
-E_aux: 6
-number_mb_per_epoch: 8
-rollout_size: 256
-aux_mb_per_N_pi: 16
-beta_clone: 2.0
 
+###normalization
+use_max_grad_norm: true
+max_grad_norm: 2
+normalize_adv_r: true
+normalize_adv_c: true
+
+###regularization
+use_critic_norm: false
+critic_norm_coef: 5000
+
+###gae
 gae:
   gamma: 0.99
   lam: 0.95
 
-# model architecture is fixed to PPGActorCritic
-hidden_sizes: [256, 256]
-activation: "tanh"
-initialization_method: "orthogonal"
-
-#early stopping
-use_kl_early_stopping: true
-early_stopping_target_kl: 0.01
+###early stopping
+kl_early_stop: true
+target_kl: 0.01
 
 use_cost: false
+cost_scaling: 1.0

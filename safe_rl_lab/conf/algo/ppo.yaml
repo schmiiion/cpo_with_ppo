@@ -10,18 +10,18 @@ rollout_size: 256
 a2c_architecture: "separate"
 hidden_sizes: [256, 256]
 activation: "tanh"
-output_activation: "tanh"
+output_activation: "identity"
 weight_initialization_method: "orthogonal"
 
 #optimization
-lr: 3e-4
+lr: 1e-4
 anneal_lr: false
 clip_epsilon: 0.2
 entropy_coef: 0.0
 
 #normalization
 use_max_grad_norm: true
-max_grad_norm: 0.5
+max_grad_norm: 2
 normalize_adv_r: true
 normalize_adv_c: true
 
@@ -37,4 +37,7 @@ gae:
 #early stopping
 kl_early_stop: true
 target_kl: 0.02
+
+#remove and add default value
+cost_scaling: 1.0
 

@@ -7,7 +7,11 @@ class AgentFactory:
     @staticmethod
     def create(algo_type, obs_dim, act_dim, cfg, device):
         if algo_type == "ppo":
-            pass
+            if cfg.algo.a2c_architecture == "separate":
+                a2c = SeparateActorCritic(obs_dim, act_dim, cfg=cfg)
+                return a2c
+            elif cfg.algo.a2c_architecture == "shared":
+                pass
 
         elif algo_type == "ppo_lag":
             if cfg.algo.a2c_architecture == "separate":
@@ -19,7 +23,11 @@ class AgentFactory:
                 return a2c
 
         elif algo_type == "ppg":
-            pass
+            if cfg.algo.a2c_architecture == "separate":
+                a2c = SeparateActorCritic(obs_dim, act_dim, cfg=cfg)
+                return a2c
+            elif cfg.algo.a2c_architecture == "shared":
+                pass
 
 
         elif algo_type == "ppg_lag":
